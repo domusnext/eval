@@ -24,9 +24,8 @@ export async function uploadToR2(
         const arrayBuffer = await file.arrayBuffer();
 
         // Upload to R2
-        // !starterconf - update this to match your R2 bucket binding name
-        // change "next_cf_app_bucket" to your R2 bucket binding name on `wrangler.jsonc`
-        const result = await env.next_cf_app_bucket.put(key, arrayBuffer, {
+        // Uses the `eval_r2_bucket` binding configured in `wrangler.jsonc`
+        const result = await env.eval_r2_bucket.put(key, arrayBuffer, {
             httpMetadata: {
                 contentType: file.type,
                 cacheControl: "public, max-age=31536000", // 1 year
@@ -65,7 +64,7 @@ export async function uploadToR2(
 export async function getFromR2(key: string): Promise<R2Object | null> {
     try {
         const { env } = await getCloudflareContext();
-        return env.next_cf_app_bucket.get(key);
+        return env.eval_r2_bucket.get(key);
     } catch (error) {
         console.error("Error getting data from R2", error);
         return null;

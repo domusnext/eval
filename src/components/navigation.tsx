@@ -1,7 +1,6 @@
-import { CheckSquare, Home } from "lucide-react";
+import { BrainCircuit, LayoutDashboard } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import LogoutButton from "../modules/auth/components/logout-button";
 
 export function Navigation() {
     return (
@@ -11,26 +10,20 @@ export function Navigation() {
                     <div className="flex items-center space-x-6">
                         <Link
                             href="/"
-                            className="text-xl font-bold text-gray-900"
+                            className="flex items-center gap-2 text-xl font-bold text-gray-900"
                         >
-                            TodoApp
+                            <BrainCircuit className="size-5 text-primary" />
+                            EvalWorkspace
                         </Link>
-                        <div className="items-center space-x-4 hidden md:flex">
-                            <Link href="/">
+                        <div className="hidden items-center space-x-4 md:flex">
+                            <Link href="/evaluations">
                                 <Button variant="ghost" size="sm">
-                                    <Home className="mr-2 h-4 w-4" />
-                                    Home
-                                </Button>
-                            </Link>
-                            <Link href="/todos">
-                                <Button variant="ghost" size="sm">
-                                    <CheckSquare className="mr-2 h-4 w-4" />
-                                    Todos
+                                    <LayoutDashboard className="mr-2 h-4 w-4" />
+                                    Workspace
                                 </Button>
                             </Link>
                         </div>
                     </div>
-                    <LogoutButton />
                 </div>
             </div>
         </nav>
