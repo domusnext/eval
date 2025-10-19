@@ -47,6 +47,7 @@
         "dotenv": "^17.2.2",
         "drizzle-orm": "^0.44.5",
         "drizzle-zod": "^0.8.3",
+        "esbuild": "^0.25.11",
         "lucide-react": "^0.544.0",
         "next": "15.4.6",
         "react": "19.1.0",
@@ -67,5 +68,10 @@
         "tw-animate-css": "^1.3.8",
         "typescript": "^5",
         "wrangler": "^4.35.0"
+    },
+    "pnpm":{
+        "overrides": {
+            "esbuild": "0.25.11"
+        }
     }
 }

@@ -26,7 +26,8 @@
     "r2_buckets": [
         {
             "bucket_name": "eval-uploads",
-            "binding": "eval_r2_bucket"
+            "binding": "eval_r2_bucket",
+              "preview_bucket_name": "eval-uploads"
         }
     ]
     /**
