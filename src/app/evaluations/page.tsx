@@ -7,17 +7,11 @@ export default async function EvaluationsPage() {
     const versions = await fetchEvaluationTree();
 
     return (
-        <div className="container mx-auto my-10 px-4">
-            <div className="mb-6">
-                <h1 className="text-3xl font-bold text-slate-900">
-                    Evaluation Workspace
-                </h1>
-                <p className="mt-2 text-slate-600">
-                    Browse contexts, cases, and payload details for each
-                    evaluation version.
-                </p>
-            </div>
-            <EvaluationWorkspace initialVersions={versions} />
+        <div className="flex h-[calc(100vh-4rem)] flex-col pb-6">
+            <EvaluationWorkspace
+                initialVersions={versions}
+                className="flex-1"
+            />
         </div>
     );
 }

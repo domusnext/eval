@@ -1,7 +1,7 @@
 "use client";
 
 import type { Dispatch, ReactNode, SetStateAction } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-hot-toast";
 import {
     ChevronDown,
@@ -34,6 +34,14 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
 import type {
     EvaluationCase,
     EvaluationContext,
@@ -86,12 +94,16 @@ const statusLabelMap: Record<StatusBadge, string> = {
 
 const cloneData = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 
+const RUN_CONFIG_STORAGE_KEY = "evaluation-run-config";
+
 interface EvaluationWorkspaceProps {
     initialVersions: EvaluationVersion[];
+    className?: string;
 }
 
 export function EvaluationWorkspace({
     initialVersions,
+    className,
 }: EvaluationWorkspaceProps) {
     const [versionsState, setVersionsState] = useState<EvaluationVersion[]>(
         () => cloneData(initialVersions),
@@ -116,6 +128,16 @@ export function EvaluationWorkspace({
     });
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [isMutating, setIsMutating] = useState(false);
+    const [isRunConfigDialogOpen, setRunConfigDialogOpen] = useState(false);
+    const [isVersionDialogOpen, setVersionDialogOpen] = useState(false);
+    const [isContextDialogOpen, setContextDialogOpen] = useState(false);
+    const [caseDialogTarget, setCaseDialogTarget] = useState<{
+        contextId: string;
+        caseId: string;
+    } | null>(null);
+    const [isCaseDialogOpen, setCaseDialogOpen] = useState(false);
+    const [isRunMenuOpen, setRunMenuOpen] = useState(false);
+    const runMenuRef = useRef<HTMLDivElement | null>(null);
 
     const apiRequest = useCallback(
         async <T = unknown>(url: string, init?: RequestInit): Promise<T> => {
@@ -215,6 +237,71 @@ export function EvaluationWorkspace({
     const isBusy = isMutating || isRefreshing;
 
     useEffect(() => {
+        if (typeof window === "undefined") return;
+        try {
+            const stored = window.localStorage.getItem(RUN_CONFIG_STORAGE_KEY);
+            if (!stored) return;
+            const parsed = JSON.parse(stored) as Partial<RunConfig>;
+            setRunConfig((prev) => {
+                const maxCases =
+                    typeof parsed.maxCasesPerRun === "number" &&
+                    Number.isFinite(parsed.maxCasesPerRun)
+                        ? Math.max(1, Math.floor(parsed.maxCasesPerRun))
+                        : prev.maxCasesPerRun;
+                const concurrent =
+                    typeof parsed.concurrentRequests === "number" &&
+                    Number.isFinite(parsed.concurrentRequests)
+                        ? Math.max(1, Math.floor(parsed.concurrentRequests))
+                        : prev.concurrentRequests;
+                return {
+                    maxCasesPerRun: maxCases,
+                    concurrentRequests: concurrent,
+                };
+            });
+        } catch {
+            // ignore corrupted storage
+        }
+    }, []);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        window.localStorage.setItem(
+            RUN_CONFIG_STORAGE_KEY,
+            JSON.stringify(runConfig),
+        );
+    }, [runConfig]);
+
+    useEffect(() => {
+        if (!isRunMenuOpen) return;
+        const handlePointerDown = (event: MouseEvent) => {
+            if (
+                runMenuRef.current &&
+                event.target instanceof Node &&
+                !runMenuRef.current.contains(event.target)
+            ) {
+                setRunMenuOpen(false);
+            }
+        };
+        const handleEscape = (event: KeyboardEvent) => {
+            if (event.key === "Escape") {
+                setRunMenuOpen(false);
+            }
+        };
+        window.addEventListener("pointerdown", handlePointerDown);
+        window.addEventListener("keydown", handleEscape);
+        return () => {
+            window.removeEventListener("pointerdown", handlePointerDown);
+            window.removeEventListener("keydown", handleEscape);
+        };
+    }, [isRunMenuOpen]);
+
+    useEffect(() => {
+        if (isRunConfigDialogOpen) {
+            setRunMenuOpen(false);
+        }
+    }, [isRunConfigDialogOpen]);
+
+    useEffect(() => {
         setVersionsState(cloneData(initialVersions));
         sanitizeSelections(initialVersions);
     }, [initialVersions, sanitizeSelections]);
@@ -222,6 +309,13 @@ export function EvaluationWorkspace({
         if (!activeVersionId) return undefined;
         return versionsState.find((version) => version.id === activeVersionId);
     }, [versionsState, activeVersionId]);
+    const totalCaseCount = useMemo(() => {
+        if (!activeVersion) return 0;
+        return activeVersion.contexts.reduce(
+            (acc, context) => acc + context.cases.length,
+            0,
+        );
+    }, [activeVersion]);
 
     useEffect(() => {
         if (!activeVersion) {
@@ -275,6 +369,51 @@ export function EvaluationWorkspace({
                   (testCase) => testCase.id === selectedNode.caseId,
               )
             : undefined;
+    const selectedCaseId =
+        selectedNode.type === "case" ? selectedNode.caseId : null;
+    const caseDialogData = useMemo(() => {
+        if (!caseDialogTarget || !activeVersion) return undefined;
+        const context = activeVersion.contexts.find(
+            (ctx) => ctx.id === caseDialogTarget.contextId,
+        );
+        if (!context) return undefined;
+        const testCase = context.cases.find(
+            (item) => item.id === caseDialogTarget.caseId,
+        );
+        if (!testCase) return undefined;
+        return { context, testCase };
+    }, [caseDialogTarget, activeVersion]);
+
+    useEffect(() => {
+        if (!activeVersion) {
+            setVersionDialogOpen(false);
+            setContextDialogOpen(false);
+            setCaseDialogOpen(false);
+        }
+    }, [activeVersion]);
+
+    useEffect(() => {
+        if (!selectedContext) {
+            setContextDialogOpen(false);
+        }
+    }, [selectedContext]);
+
+    useEffect(() => {
+        if (!caseDialogTarget) return;
+        const context = activeVersion?.contexts.find(
+            (item) => item.id === caseDialogTarget.contextId,
+        );
+        const caseExists = context?.cases.some(
+            (item) => item.id === caseDialogTarget.caseId,
+        );
+        if (!context || !caseExists) {
+            if (!isCaseDialogOpen) {
+                return;
+            }
+            setCaseDialogOpen(false);
+            setCaseDialogTarget(null);
+        }
+    }, [caseDialogTarget, activeVersion, isCaseDialogOpen]);
 
     const toggleContextChecked = (
         context: EvaluationContext,
@@ -339,6 +478,11 @@ export function EvaluationWorkspace({
             setIsMutating(false);
         }
     };
+
+    const openCaseEditor = useCallback((contextId: string, caseId: string) => {
+        setCaseDialogTarget({ contextId, caseId });
+        setCaseDialogOpen(true);
+    }, []);
 
     const handleDuplicateVersion = async (version: EvaluationVersion) => {
         if (isMutating) return;
@@ -519,13 +663,17 @@ export function EvaluationWorkspace({
                 },
             );
             if (data?.id) {
+                setCaseDialogTarget({ contextId, caseId: data.id });
+            }
+            await refreshTree();
+            if (data?.id) {
                 setSelectedNode({
                     type: "case",
                     contextId,
                     caseId: data.id,
                 });
+                setCaseDialogOpen(true);
             }
-            await refreshTree();
             toast.success("Added new case");
         } catch (error) {
             const message =
@@ -731,9 +879,15 @@ export function EvaluationWorkspace({
 
     const selectedContextCount = checkedContextIds.size;
     const selectedCaseCount = checkedCaseIds.size;
+    const canRunSelection = selectedContextCount > 0 || selectedCaseCount > 0;
 
     return (
-        <div className="flex h-[calc(100vh-4rem)] min-h-[560px] overflow-hidden rounded-2xl border bg-white shadow-sm">
+        <div
+            className={cn(
+                "flex h-full min-h-[560px] w-full overflow-hidden rounded-2xl border bg-white shadow-sm",
+                className,
+            )}
+        >
             <aside className="w-80 border-r bg-slate-50">
                 <div className="border-b p-4 space-y-3">
                     <div className="flex items-center justify-between">
@@ -978,197 +1132,550 @@ export function EvaluationWorkspace({
             </aside>
 
             <section className="flex-1 overflow-y-auto p-6 space-y-6">
-                <RunControls
-                    activeVersion={activeVersion}
-                    runConfig={runConfig}
-                    setRunConfig={setRunConfig}
-                    isBusy={isBusy}
-                    onRunVersion={async () => {
-                        if (activeVersion) {
-                            await runCases(
-                                {
-                                    kind: "version",
-                                    versionId: activeVersion.id,
-                                },
-                                `version ${activeVersion.label}`,
-                            );
-                        }
-                    }}
-                />
+                {activeVersion ? (
+                    <>
+                        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <h2 className="text-xl font-semibold text-slate-900">
+                                    {activeVersion.label}
+                                </h2>
+                                <p className="text-sm text-slate-500">
+                                    {activeVersion.contexts.length} context
+                                    {activeVersion.contexts.length === 1
+                                        ? ""
+                                        : "s"}{" "}
+                                    · {totalCaseCount} case
+                                    {totalCaseCount === 1 ? "" : "s"}
+                                </p>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                                <div className="relative" ref={runMenuRef}>
+                                    <div className="inline-flex overflow-hidden rounded-md border bg-white shadow-sm">
+                                        <Button
+                                            size="sm"
+                                            variant="default"
+                                            className="rounded-none rounded-l-md"
+                                            disabled={
+                                                !canRunSelection ||
+                                                !activeVersion ||
+                                                isBusy
+                                            }
+                                            onClick={() => {
+                                                if (
+                                                    !activeVersion ||
+                                                    !canRunSelection
+                                                ) {
+                                                    return;
+                                                }
+                                                void runCases(
+                                                    {
+                                                        kind: "selection",
+                                                        versionId:
+                                                            activeVersion.id,
+                                                        contextIds:
+                                                            Array.from(
+                                                                checkedContextIds,
+                                                            ),
+                                                        caseIds:
+                                                            Array.from(
+                                                                checkedCaseIds,
+                                                            ),
+                                                    },
+                                                    "selected scopes",
+                                                );
+                                            }}
+                                        >
+                                            <Play className="mr-2 size-4" />
+                                            Run selected
+                                        </Button>
+                                        <Button
+                                            size="sm"
+                                            variant="default"
+                                            className="rounded-none rounded-r-md border-l border-white/20 px-2"
+                                            disabled={!activeVersion || isBusy}
+                                            onClick={() => {
+                                                if (!activeVersion || isBusy)
+                                                    return;
+                                                setRunMenuOpen((prev) => !prev);
+                                            }}
+                                        >
+                                            <ChevronDown className="size-4" />
+                                        </Button>
+                                    </div>
+                                    {isRunMenuOpen ? (
+                                        <div className="absolute right-0 z-10 mt-2 w-48 overflow-hidden rounded-md border bg-white shadow-lg">
+                                            <button
+                                                type="button"
+                                                className="flex w-full items-center justify-between px-3 py-2 text-sm text-slate-700 transition-colors hover:bg-slate-100"
+                                                disabled={isBusy}
+                                                onClick={() => {
+                                                    if (!activeVersion) return;
+                                                    setRunMenuOpen(false);
+                                                    void runCases(
+                                                        {
+                                                            kind: "version",
+                                                            versionId:
+                                                                activeVersion.id,
+                                                        },
+                                                        `version ${activeVersion.label}`,
+                                                    );
+                                                }}
+                                            >
+                                                Run version
+                                                <Play className="size-3.5 text-slate-400" />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="flex w-full items-center justify-between px-3 py-2 text-sm text-slate-700 transition-colors hover:bg-slate-100"
+                                                disabled={
+                                                    !canRunSelection || isBusy
+                                                }
+                                                onClick={() => {
+                                                    if (
+                                                        !activeVersion ||
+                                                        !canRunSelection
+                                                    ) {
+                                                        return;
+                                                    }
+                                                    setRunMenuOpen(false);
+                                                    void runCases(
+                                                        {
+                                                            kind: "selection",
+                                                            versionId:
+                                                                activeVersion.id,
+                                                            contextIds:
+                                                                Array.from(
+                                                                    checkedContextIds,
+                                                                ),
+                                                            caseIds:
+                                                                Array.from(
+                                                                    checkedCaseIds,
+                                                                ),
+                                                        },
+                                                        "selected scopes",
+                                                    );
+                                                }}
+                                            >
+                                                Run selected
+                                                <Play className="size-3.5 text-slate-400" />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="flex w-full items-center justify-between px-3 py-2 text-sm text-slate-700 transition-colors hover:bg-slate-100"
+                                                onClick={() => {
+                                                    setRunMenuOpen(false);
+                                                    setRunConfigDialogOpen(
+                                                        true,
+                                                    );
+                                                }}
+                                            >
+                                                Edit config
+                                                <Settings2 className="size-3.5 text-slate-400" />
+                                            </button>
+                                        </div>
+                                    ) : null}
+                                </div>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={!activeVersion || isBusy}
+                                    onClick={() => setVersionDialogOpen(true)}
+                                >
+                                    Edit version
+                                </Button>
+                            </div>
+                        </div>
 
-                {selectedNode.type === "version" && activeVersion ? (
-                    <VersionDetails
-                        version={activeVersion}
-                        isBusy={isBusy}
-                        onSave={(updates) =>
-                            handleUpdateVersion(activeVersion.id, updates)
-                        }
-                        onDelete={() => handleDeleteVersion(activeVersion.id)}
-                        onRun={() =>
-                            runCases(
-                                {
-                                    kind: "version",
-                                    versionId: activeVersion.id,
-                                },
-                                `version ${activeVersion.label}`,
-                            )
-                        }
-                    />
-                ) : selectedNode.type === "context" && selectedContext ? (
-                    <ContextDetails
-                        context={selectedContext}
-                        isBusy={isBusy}
-                        onSave={(payload) =>
-                            handleUpdateContext(selectedContext.id, payload)
-                        }
-                        onDelete={() => handleDeleteContext(selectedContext)}
-                        onAddCase={() => handleAddCase(selectedContext.id)}
-                        onRun={() =>
-                            runCases(
-                                {
-                                    kind: "context",
-                                    versionId: activeVersion!.id,
-                                    contextId: selectedContext.id,
-                                },
-                                `context ${selectedContext.name}`,
-                            )
-                        }
-                    />
-                ) : selectedNode.type === "case" &&
-                  selectedCase &&
-                  selectedContext ? (
-                    <CaseDetails
-                        context={selectedContext}
-                        testCase={selectedCase}
-                        isBusy={isBusy}
-                        onSave={(payload) =>
-                            handleUpdateCase(
-                                selectedContext.id,
-                                selectedCase.id,
-                                payload,
-                            )
-                        }
-                        onDelete={() =>
-                            handleDeleteCase(selectedContext.id, selectedCase)
-                        }
-                        onRun={() =>
-                            runCases(
-                                {
-                                    kind: "case",
-                                    versionId: activeVersion!.id,
-                                    contextId: selectedContext.id,
-                                    caseId: selectedCase.id,
-                                },
-                                `case ${selectedCase.title}`,
-                            )
-                        }
-                    />
+                        {selectedNode.type === "version" ? (
+                            <VersionSummary
+                                version={activeVersion}
+                                isBusy={isBusy}
+                                onEdit={() => setVersionDialogOpen(true)}
+                                onDelete={() =>
+                                    handleDeleteVersion(activeVersion.id)
+                                }
+                                onRun={() =>
+                                    runCases(
+                                        {
+                                            kind: "version",
+                                            versionId: activeVersion.id,
+                                        },
+                                        `version ${activeVersion.label}`,
+                                    )
+                                }
+                            />
+                        ) : null}
+
+                        {selectedNode.type === "context" && selectedContext ? (
+                            <ContextSummary
+                                context={selectedContext}
+                                isBusy={isBusy}
+                                onEdit={() => {
+                                    if (!selectedContext) return;
+                                    setContextDialogOpen(true);
+                                }}
+                                onRun={() =>
+                                    runCases(
+                                        {
+                                            kind: "context",
+                                            versionId: activeVersion.id,
+                                            contextId: selectedContext.id,
+                                        },
+                                        `context ${selectedContext.name}`,
+                                    )
+                                }
+                                onDelete={() =>
+                                    handleDeleteContext(selectedContext)
+                                }
+                                onAddCase={() =>
+                                    handleAddCase(selectedContext.id)
+                                }
+                                onRunCase={(caseId, label) =>
+                                    runCases(
+                                        {
+                                            kind: "case",
+                                            versionId: activeVersion.id,
+                                            contextId: selectedContext.id,
+                                            caseId,
+                                        },
+                                        `case ${label}`,
+                                    )
+                                }
+                                onEditCase={(caseId) =>
+                                    openCaseEditor(selectedContext.id, caseId)
+                                }
+                                onSelectCase={(caseId) =>
+                                    setSelectedNode({
+                                        type: "case",
+                                        contextId: selectedContext.id,
+                                        caseId,
+                                    })
+                                }
+                                selectedCaseId={selectedCaseId}
+                            />
+                        ) : null}
+
+                        {selectedCase &&
+                        selectedContext ? (
+                            <CaseSummary
+                                context={selectedContext}
+                                testCase={selectedCase}
+                                isBusy={isBusy}
+                                onRun={() =>
+                                    runCases(
+                                        {
+                                            kind: "case",
+                                            versionId: activeVersion.id,
+                                            contextId: selectedContext.id,
+                                            caseId: selectedCase.id,
+                                        },
+                                        `case ${selectedCase.title}`,
+                                    )
+                                }
+                                onDelete={() =>
+                                    handleDeleteCase(
+                                        selectedContext.id,
+                                        selectedCase,
+                                    )
+                                }
+                                onEdit={() =>
+                                    openCaseEditor(
+                                        selectedContext.id,
+                                        selectedCase.id,
+                                    )
+                                }
+                            />
+                        ) : null}
+                    </>
                 ) : (
                     <EmptyState />
                 )}
             </section>
+            <RunConfigDialog
+                open={isRunConfigDialogOpen}
+                onOpenChange={setRunConfigDialogOpen}
+                runConfig={runConfig}
+                setRunConfig={setRunConfig}
+            />
+            {activeVersion ? (
+                <VersionEditDialog
+                    open={isVersionDialogOpen}
+                    onOpenChange={setVersionDialogOpen}
+                    version={activeVersion}
+                    isBusy={isBusy}
+                    onSave={(updates) =>
+                        handleUpdateVersion(activeVersion.id, updates)
+                    }
+                    onDelete={() => handleDeleteVersion(activeVersion.id)}
+                />
+            ) : null}
+            {selectedContext ? (
+                <ContextEditDialog
+                    open={isContextDialogOpen}
+                    onOpenChange={setContextDialogOpen}
+                    context={selectedContext}
+                    isBusy={isBusy}
+                    onSave={(updates) =>
+                        handleUpdateContext(selectedContext.id, updates)
+                    }
+                />
+            ) : null}
+            {caseDialogData ? (
+                <CaseEditDialog
+                    open={isCaseDialogOpen}
+                    onOpenChange={(open) => {
+                        setCaseDialogOpen(open);
+                        if (!open) {
+                            setCaseDialogTarget(null);
+                        }
+                    }}
+                    context={caseDialogData.context}
+                    testCase={caseDialogData.testCase}
+                    isBusy={isBusy}
+                    onSave={(updates) =>
+                        handleUpdateCase(
+                            caseDialogData.context.id,
+                            caseDialogData.testCase.id,
+                            updates,
+                        )
+                    }
+                />
+            ) : null}
         </div>
     );
 }
 
-function RunControls({
-    activeVersion,
+function RunConfigDialog({
+    open,
+    onOpenChange,
     runConfig,
     setRunConfig,
-    onRunVersion,
-    isBusy,
 }: {
-    activeVersion?: EvaluationVersion;
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
     runConfig: RunConfig;
     setRunConfig: Dispatch<SetStateAction<RunConfig>>;
-    onRunVersion: () => Promise<void>;
+}) {
+    const handleNumberChange = (key: keyof RunConfig, rawValue: string) => {
+        const normalized = rawValue.trim();
+        if (!normalized) {
+            setRunConfig((prev) => ({
+                ...prev,
+                [key]: 1,
+            }));
+            return;
+        }
+        const parsed = Number.parseInt(normalized, 10);
+        if (Number.isNaN(parsed) || parsed <= 0) {
+            return;
+        }
+        setRunConfig((prev) => ({
+            ...prev,
+            [key]: parsed,
+        }));
+    };
+
+    return (
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent className="max-w-md">
+                <DialogHeader>
+                    <DialogTitle>Run configuration</DialogTitle>
+                    <DialogDescription>
+                        Configure concurrency and batch sizing shared by all
+                        evaluation runs.
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4">
+                    <div className="space-y-2">
+                        <Label htmlFor="run-config-batch">
+                            Cases per batch
+                        </Label>
+                        <Input
+                            id="run-config-batch"
+                            type="number"
+                            min={1}
+                            value={runConfig.maxCasesPerRun}
+                            onChange={(event) =>
+                                handleNumberChange(
+                                    "maxCasesPerRun",
+                                    event.target.value,
+                                )
+                            }
+                        />
+                        <p className="text-xs text-slate-500">
+                            Controls how many cases are processed sequentially
+                            in each batch.
+                        </p>
+                    </div>
+                    <div className="space-y-2">
+                        <Label htmlFor="run-config-concurrency">
+                            Concurrent requests
+                        </Label>
+                        <Input
+                            id="run-config-concurrency"
+                            type="number"
+                            min={1}
+                            value={runConfig.concurrentRequests}
+                            onChange={(event) =>
+                                handleNumberChange(
+                                    "concurrentRequests",
+                                    event.target.value,
+                                )
+                            }
+                        />
+                        <p className="text-xs text-slate-500">
+                            Maximum number of parallel requests issued to the
+                            downstream agent.
+                        </p>
+                    </div>
+                </div>
+                <DialogFooter>
+                    <Button
+                        variant="outline"
+                        onClick={() => onOpenChange(false)}
+                    >
+                        Close
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+function VersionSummary({
+    version,
+    onEdit,
+    onRun,
+    onDelete,
+    isBusy,
+}: {
+    version: EvaluationVersion;
+    onEdit: () => void;
+    onRun: () => Promise<void>;
+    onDelete: () => Promise<void>;
     isBusy: boolean;
 }) {
+    const totalCases = version.contexts.reduce(
+        (acc, context) => acc + context.cases.length,
+        0,
+    );
+
     return (
         <Card>
-            <CardHeader className="flex flex-row items-center justify-between gap-4">
-                <div>
-                    <CardTitle className="flex items-center gap-2 text-base">
-                        <Settings2 className="size-4" />
-                        Run configuration
-                    </CardTitle>
-                    <CardDescription>
-                        Configure batch size and concurrency before launching
-                        runs.
-                    </CardDescription>
+            <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="space-y-2">
+                    <CardTitle className="text-lg">{version.label}</CardTitle>
+                    {version.notes ? (
+                        <CardDescription className="max-w-2xl">
+                            {version.notes}
+                        </CardDescription>
+                    ) : (
+                        <CardDescription>
+                            No notes recorded for this version.
+                        </CardDescription>
+                    )}
                 </div>
-                <Button
-                    size="sm"
-                    disabled={isBusy || !activeVersion}
-                    onClick={async () => {
-                        await onRunVersion();
-                    }}
-                >
-                    <Play className="mr-2 size-4" />
-                    Run Version
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                    <Button
+                        size="sm"
+                        variant="default"
+                        disabled={isBusy}
+                        onClick={() => {
+                            void onRun();
+                        }}
+                    >
+                        <Play className="mr-2 size-4" />
+                        Run version
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={isBusy}
+                        onClick={onEdit}
+                    >
+                        <Settings2 className="mr-2 size-4" />
+                        Edit
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="destructive"
+                        disabled={isBusy}
+                        onClick={() => {
+                            void onDelete();
+                        }}
+                    >
+                        <Trash2 className="mr-2 size-4" />
+                        Delete
+                    </Button>
+                </div>
             </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                    <Label htmlFor="maxCasesPerRun">Cases per batch</Label>
-                    <Input
-                        id="maxCasesPerRun"
-                        type="number"
-                        min={1}
-                        value={runConfig.maxCasesPerRun}
-                        onChange={(event) =>
-                            setRunConfig((prev) => ({
-                                ...prev,
-                                maxCasesPerRun: Math.max(
-                                    1,
-                                    Number.parseInt(
-                                        event.target.value || "1",
-                                        10,
-                                    ),
-                                ),
-                            }))
-                        }
+            <CardContent className="space-y-6">
+                <div className="grid gap-4 sm:grid-cols-3">
+                    <StatTile
+                        label="Contexts"
+                        value={`${version.contexts.length}`}
+                    />
+                    <StatTile label="Cases" value={`${totalCases}`} />
+                    <StatTile
+                        label="Agent endpoint"
+                        value={version.agentBaseUrl ?? "—"}
                     />
                 </div>
-                <div className="space-y-2">
-                    <Label htmlFor="concurrentRequests">
-                        Concurrent requests
-                    </Label>
-                    <Input
-                        id="concurrentRequests"
-                        type="number"
-                        min={1}
-                        value={runConfig.concurrentRequests}
-                        onChange={(event) =>
-                            setRunConfig((prev) => ({
-                                ...prev,
-                                concurrentRequests: Math.max(
-                                    1,
-                                    Number.parseInt(
-                                        event.target.value || "1",
-                                        10,
-                                    ),
-                                ),
-                            }))
-                        }
-                    />
+                <div className="space-y-3">
+                    <h4 className="text-sm font-semibold text-slate-700">
+                        Contexts
+                    </h4>
+                    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                        {version.contexts.map((context) => (
+                            <div
+                                key={context.id}
+                                className="rounded-lg border bg-slate-50 px-4 py-3"
+                            >
+                                <p className="text-sm font-medium text-slate-900">
+                                    {context.name}
+                                </p>
+                                <p className="text-xs text-slate-500">
+                                    {context.cases.length} case
+                                    {context.cases.length === 1 ? "" : "s"}
+                                </p>
+                            </div>
+                        ))}
+                        {version.contexts.length === 0 ? (
+                            <div className="rounded-lg border border-dashed bg-white px-4 py-6 text-center text-sm text-slate-500">
+                                No contexts yet. Add one from the sidebar.
+                            </div>
+                        ) : null}
+                    </div>
                 </div>
             </CardContent>
         </Card>
     );
 }
 
-function VersionDetails({
+function StatTile({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="rounded-lg border bg-white px-4 py-3 shadow-xs">
+            <p className="text-xs uppercase tracking-wide text-slate-500">
+                {label}
+            </p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">{value}</p>
+        </div>
+    );
+}
+
+function VersionEditDialog({
+    open,
+    onOpenChange,
     version,
     onSave,
     onDelete,
-    onRun,
     isBusy,
 }: {
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
     version: EvaluationVersion;
     onSave: (updates: Partial<EvaluationVersion>) => Promise<void>;
     onDelete: () => Promise<void>;
-    onRun: () => Promise<void>;
     isBusy: boolean;
 }) {
     const [label, setLabel] = useState(version.label);
@@ -1178,47 +1685,190 @@ function VersionDetails({
     );
 
     useEffect(() => {
+        if (!open) return;
         setLabel(version.label);
         setNotes(version.notes ?? "");
         setAgentBaseUrl(version.agentBaseUrl ?? "");
-    }, [version]);
+    }, [open, version]);
+
+    const totalContexts = version.contexts.length;
+    const totalCases = version.contexts.reduce(
+        (acc, context) => acc + context.cases.length,
+        0,
+    );
 
     const handleSave = async () => {
+        if (!label.trim()) {
+            toast.error("Version label cannot be empty.");
+            return;
+        }
+
         await onSave({
             label,
             notes,
             agentBaseUrl,
         });
+        onOpenChange(false);
+    };
+
+    const handleDelete = async () => {
+        await onDelete();
+        onOpenChange(false);
     };
 
     return (
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+                <DialogHeader>
+                    <DialogTitle>Edit version</DialogTitle>
+                    <DialogDescription>
+                        Update metadata and downstream agent configuration.
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-5">
+                    <div className="grid gap-4 md:grid-cols-2">
+                        <div className="space-y-2">
+                            <Label htmlFor="edit-version-label">Label</Label>
+                            <Input
+                                id="edit-version-label"
+                                value={label}
+                                onChange={(event) =>
+                                    setLabel(event.target.value)
+                                }
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="edit-version-agent">
+                                Agent endpoint
+                            </Label>
+                            <Input
+                                id="edit-version-agent"
+                                placeholder="https://example.com/agent"
+                                value={agentBaseUrl}
+                                onChange={(event) =>
+                                    setAgentBaseUrl(event.target.value)
+                                }
+                            />
+                        </div>
+                    </div>
+                    <div className="space-y-2">
+                        <Label htmlFor="edit-version-notes">Notes</Label>
+                        <Textarea
+                            id="edit-version-notes"
+                            rows={4}
+                            value={notes}
+                            onChange={(event) => setNotes(event.target.value)}
+                        />
+                        <p className="text-xs text-slate-500">
+                            {totalContexts} context
+                            {totalContexts === 1 ? "" : "s"} · {totalCases} case
+                            {totalCases === 1 ? "" : "s"} attached.
+                        </p>
+                    </div>
+                </div>
+                <DialogFooter className="flex-row justify-between gap-2">
+                    <Button
+                        variant="destructive"
+                        disabled={isBusy}
+                        onClick={() => {
+                            void handleDelete();
+                        }}
+                    >
+                        <Trash2 className="mr-2 size-4" />
+                        Delete version
+                    </Button>
+                    <div className="flex gap-2">
+                        <Button
+                            variant="outline"
+                            onClick={() => onOpenChange(false)}
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            disabled={isBusy}
+                            onClick={() => {
+                                void handleSave();
+                            }}
+                        >
+                            Save changes
+                        </Button>
+                    </div>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+function ContextSummary({
+    context,
+    isBusy,
+    onEdit,
+    onRun,
+    onDelete,
+    onAddCase,
+    onRunCase,
+    onEditCase,
+    onSelectCase,
+    selectedCaseId,
+}: {
+    context: EvaluationContext;
+    isBusy: boolean;
+    onEdit: () => void;
+    onRun: () => Promise<void>;
+    onDelete: () => Promise<void>;
+    onAddCase: () => Promise<void>;
+    onRunCase: (caseId: string, label: string) => Promise<void>;
+    onEditCase: (caseId: string) => void;
+    onSelectCase: (caseId: string) => void;
+    selectedCaseId: string | null;
+}) {
+    return (
         <Card>
-            <CardHeader className="flex flex-row items-start justify-between gap-4">
-                <div>
-                    <CardTitle>Version overview</CardTitle>
+            <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="space-y-1">
+                    <CardTitle>{context.name}</CardTitle>
                     <CardDescription>
-                        Update metadata and review the contexts bundled in this
-                        version.
+                        {context.description ?? "No description provided."}
                     </CardDescription>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                     <Button
-                        variant="outline"
                         size="sm"
+                        variant="default"
                         disabled={isBusy}
-                        onClick={async () => {
-                            await onRun();
+                        onClick={() => {
+                            void onRun();
                         }}
                     >
                         <Play className="mr-2 size-4" />
-                        Run version
+                        Run context
                     </Button>
                     <Button
-                        variant="destructive"
                         size="sm"
+                        variant="outline"
                         disabled={isBusy}
-                        onClick={async () => {
-                            await onDelete();
+                        onClick={() => {
+                            void onAddCase();
+                        }}
+                    >
+                        <Plus className="mr-2 size-4" />
+                        Add case
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={isBusy}
+                        onClick={onEdit}
+                    >
+                        <Settings2 className="mr-2 size-4" />
+                        Edit
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="destructive"
+                        disabled={isBusy}
+                        onClick={() => {
+                            void onDelete();
                         }}
                     >
                         <Trash2 className="mr-2 size-4" />
@@ -1227,86 +1877,140 @@ function VersionDetails({
                 </div>
             </CardHeader>
             <CardContent className="space-y-6">
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="grid gap-4 lg:grid-cols-2">
                     <div className="space-y-2">
-                        <Label htmlFor="version-label">Label</Label>
-                        <Input
-                            id="version-label"
-                            value={label}
-                            onChange={(event) => setLabel(event.target.value)}
-                        />
+                        <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            Params JSON
+                        </h4>
+                        <JsonViewer value={context.params ?? {}} />
                     </div>
                     <div className="space-y-2">
-                        <Label htmlFor="agent-url">Agent endpoint</Label>
-                        <Input
-                            id="agent-url"
-                            value={agentBaseUrl}
-                            placeholder="https://example.com/agent/stream"
-                            onChange={(event) =>
-                                setAgentBaseUrl(event.target.value)
-                            }
-                        />
+                        <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            Headers JSON
+                        </h4>
+                        <JsonViewer value={context.headers ?? {}} />
                     </div>
                 </div>
-                <div className="space-y-2">
-                    <Label htmlFor="version-notes">Notes</Label>
-                    <Textarea
-                        id="version-notes"
-                        rows={4}
-                        value={notes}
-                        onChange={(event) => setNotes(event.target.value)}
-                    />
-                </div>
-                <div className="flex justify-end">
-                    <Button disabled={isBusy} onClick={handleSave}>
-                        Save changes
-                    </Button>
-                </div>
-                <Separator />
                 <div className="space-y-3">
-                    <h4 className="text-sm font-semibold text-slate-700">
-                        Context summary
-                    </h4>
-                    <ul className="space-y-2">
-                        {version.contexts.map((context) => (
-                            <li
-                                key={context.id}
-                                className="flex items-center justify-between rounded-lg border bg-slate-50 px-4 py-2 text-sm"
-                            >
-                                <span className="font-medium">
-                                    {context.name}
-                                </span>
-                                <span className="text-slate-500">
-                                    {context.cases.length} cases
-                                </span>
-                            </li>
-                        ))}
-                        {version.contexts.length === 0 ? (
-                            <li className="rounded-lg border border-dashed bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-                                No contexts yet. Create one from the sidebar to
-                                get started.
-                            </li>
+                    <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-semibold text-slate-700">
+                            Cases
+                        </h4>
+                        <span className="text-xs text-slate-500">
+                            {context.cases.length} total
+                        </span>
+                    </div>
+                    <div className="space-y-2">
+                        {context.cases.map((testCase) => {
+                            const status = testCase.lastRunSummary?.status;
+                            const completedAt = testCase.lastRunSummary
+                                ?.completedAt
+                                ? formatDate(
+                                      testCase.lastRunSummary.completedAt,
+                                  )
+                                : "Never run";
+
+                            return (
+                                <div
+                                    key={testCase.id}
+                                    className={cn(
+                                        "rounded-lg border bg-white px-3 py-2 shadow-xs transition",
+                                        selectedCaseId === testCase.id
+                                            ? "border-primary bg-primary/5"
+                                            : "hover:border-slate-300",
+                                    )}
+                                >
+                                    <div className="flex items-start justify-between gap-2">
+                                        <button
+                                            type="button"
+                                            className="flex-1 text-left"
+                                            onClick={() =>
+                                                onSelectCase(testCase.id)
+                                            }
+                                        >
+                                            <p className="text-sm font-medium text-slate-900">
+                                                {testCase.title}
+                                            </p>
+                                            <p className="text-xs text-slate-500">
+                                                {testCase.description
+                                                    ? testCase.description
+                                                    : "No description"}
+                                            </p>
+                                        </button>
+                                        <div className="flex items-center gap-1">
+                                            {status ? (
+                                                <Badge
+                                                    variant={
+                                                        statusVariantMap[status]
+                                                    }
+                                                >
+                                                    {statusLabelMap[status]}
+                                                </Badge>
+                                            ) : null}
+                                            <Button
+                                                size="icon"
+                                                variant="ghost"
+                                                disabled={isBusy}
+                                                onClick={() => {
+                                                    void onRunCase(
+                                                        testCase.id,
+                                                        testCase.title,
+                                                    );
+                                                }}
+                                                aria-label={`Run ${testCase.title}`}
+                                            >
+                                                <Play className="size-4" />
+                                            </Button>
+                                            <Button
+                                                size="icon"
+                                                variant="ghost"
+                                                onClick={() =>
+                                                    onEditCase(testCase.id)
+                                                }
+                                                aria-label={`Edit ${testCase.title}`}
+                                            >
+                                                <Settings2 className="size-4" />
+                                            </Button>
+                                        </div>
+                                    </div>
+                                    <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                                        <span>{completedAt}</span>
+                                        {testCase.lastRunSummary?.durationMs ? (
+                                            <span>
+                                                {
+                                                    testCase.lastRunSummary
+                                                        .durationMs
+                                                }{" "}
+                                                ms
+                                            </span>
+                                        ) : null}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                        {context.cases.length === 0 ? (
+                            <div className="rounded-lg border border-dashed bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                                No cases yet. Use “Add case” to create one.
+                            </div>
                         ) : null}
-                    </ul>
+                    </div>
                 </div>
             </CardContent>
         </Card>
     );
 }
 
-function ContextDetails({
+function ContextEditDialog({
+    open,
+    onOpenChange,
     context,
     onSave,
-    onDelete,
-    onAddCase,
-    onRun,
     isBusy,
 }: {
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
     context: EvaluationContext;
     onSave: (updates: Partial<EvaluationContext>) => Promise<void>;
-    onDelete: () => Promise<void>;
-    onAddCase: () => Promise<void>;
-    onRun: () => Promise<void>;
     isBusy: boolean;
 }) {
     const [name, setName] = useState(context.name);
@@ -1319,11 +2023,12 @@ function ContextDetails({
     );
 
     useEffect(() => {
+        if (!open) return;
         setName(context.name);
         setDescription(context.description ?? "");
         setParamsText(JSON.stringify(context.params ?? {}, null, 2));
         setHeadersText(JSON.stringify(context.headers ?? {}, null, 2));
-    }, [context]);
+    }, [open, context]);
 
     const handleSave = async () => {
         let parsedParams: Record<string, unknown> = {};
@@ -1332,7 +2037,7 @@ function ContextDetails({
         try {
             parsedParams =
                 paramsText.trim().length > 0 ? JSON.parse(paramsText) : {};
-        } catch (error) {
+        } catch {
             toast.error("Params JSON is invalid.");
             return;
         }
@@ -1340,7 +2045,7 @@ function ContextDetails({
         try {
             parsedHeaders =
                 headersText.trim().length > 0 ? JSON.parse(headersText) : {};
-        } catch (error) {
+        } catch {
             toast.error("Headers JSON is invalid.");
             return;
         }
@@ -1351,50 +2056,24 @@ function ContextDetails({
             params: parsedParams,
             headers: parsedHeaders,
         });
+        onOpenChange(false);
     };
 
     return (
-        <div className="space-y-6">
-            <Card>
-                <CardHeader className="flex flex-row items-start justify-between gap-4">
-                    <div>
-                        <CardTitle>Context details</CardTitle>
-                        <CardDescription>
-                            Adjust metadata, payload params, and headers for
-                            this context.
-                        </CardDescription>
-                    </div>
-                    <div className="flex gap-2">
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={isBusy}
-                            onClick={async () => {
-                                await onRun();
-                            }}
-                        >
-                            <Play className="mr-2 size-4" />
-                            Run context
-                        </Button>
-                        <Button
-                            variant="destructive"
-                            size="sm"
-                            disabled={isBusy}
-                            onClick={async () => {
-                                await onDelete();
-                            }}
-                        >
-                            <Trash2 className="mr-2 size-4" />
-                            Delete
-                        </Button>
-                    </div>
-                </CardHeader>
-                <CardContent className="space-y-6">
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+                <DialogHeader>
+                    <DialogTitle>Edit context</DialogTitle>
+                    <DialogDescription>
+                        Adjust metadata, params, and headers for this context.
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-5">
                     <div className="grid gap-4 md:grid-cols-2">
                         <div className="space-y-2">
-                            <Label htmlFor="context-name">Name</Label>
+                            <Label htmlFor="edit-context-name">Name</Label>
                             <Input
-                                id="context-name"
+                                id="edit-context-name"
                                 value={name}
                                 onChange={(event) =>
                                     setName(event.target.value)
@@ -1402,11 +2081,11 @@ function ContextDetails({
                             />
                         </div>
                         <div className="space-y-2">
-                            <Label htmlFor="context-description">
+                            <Label htmlFor="edit-context-description">
                                 Description
                             </Label>
                             <Input
-                                id="context-description"
+                                id="edit-context-description"
                                 value={description}
                                 onChange={(event) =>
                                     setDescription(event.target.value)
@@ -1414,13 +2093,14 @@ function ContextDetails({
                             />
                         </div>
                     </div>
-
                     <div className="grid gap-4 md:grid-cols-2">
                         <div className="space-y-2">
-                            <Label htmlFor="context-params">Params JSON</Label>
+                            <Label htmlFor="edit-context-params">
+                                Params JSON
+                            </Label>
                             <Textarea
-                                id="context-params"
-                                rows={12}
+                                id="edit-context-params"
+                                rows={10}
                                 value={paramsText}
                                 onChange={(event) =>
                                     setParamsText(event.target.value)
@@ -1428,12 +2108,12 @@ function ContextDetails({
                             />
                         </div>
                         <div className="space-y-2">
-                            <Label htmlFor="context-headers">
+                            <Label htmlFor="edit-context-headers">
                                 Headers JSON
                             </Label>
                             <Textarea
-                                id="context-headers"
-                                rows={12}
+                                id="edit-context-headers"
+                                rows={10}
                                 value={headersText}
                                 onChange={(event) =>
                                     setHeadersText(event.target.value)
@@ -1441,242 +2121,88 @@ function ContextDetails({
                             />
                         </div>
                     </div>
-
-                    <div className="flex justify-end gap-2">
-                        <Button
-                            variant="outline"
-                            disabled={isBusy}
-                            onClick={async () => {
-                                await onAddCase();
-                            }}
-                        >
-                            <Plus className="mr-2 size-4" />
-                            Add case
-                        </Button>
-                        <Button disabled={isBusy} onClick={handleSave}>
-                            Save changes
-                        </Button>
-                    </div>
-                </CardContent>
-            </Card>
-
-            <Card>
-                <CardHeader>
-                    <CardTitle>Cases in this context</CardTitle>
-                    <CardDescription>
-                        {context.cases.length} case
-                        {context.cases.length === 1 ? "" : "s"} configured.
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    {context.cases.map((testCase) => (
-                        <div
-                            key={testCase.id}
-                            className="rounded-lg border px-4 py-3 shadow-xs"
-                        >
-                            <div className="flex items-start justify-between gap-4">
-                                <div>
-                                    <h4 className="font-medium">
-                                        {testCase.title}
-                                    </h4>
-                                    {testCase.description ? (
-                                        <p className="text-sm text-slate-500">
-                                            {testCase.description}
-                                        </p>
-                                    ) : null}
-                                </div>
-                                {testCase.lastRunSummary ? (
-                                    <Badge
-                                        variant={
-                                            statusVariantMap[
-                                                testCase.lastRunSummary.status
-                                            ]
-                                        }
-                                    >
-                                        {
-                                            statusLabelMap[
-                                                testCase.lastRunSummary.status
-                                            ]
-                                        }
-                                    </Badge>
-                                ) : null}
-                            </div>
-                            <div className="mt-3 space-y-3">
-                                <div>
-                                    <h5 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                                        User message
-                                    </h5>
-                                    <MessagePreview
-                                        message={testCase.userMessage}
-                                    />
-                                </div>
-                                {testCase.assistantMessage ? (
-                                    <div>
-                                        <h5 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                                            Assistant message
-                                        </h5>
-                                        <MessagePreview
-                                            message={testCase.assistantMessage}
-                                        />
-                                    </div>
-                                ) : null}
-                            </div>
-                        </div>
-                    ))}
-                    {context.cases.length === 0 ? (
-                        <div className="rounded-lg border border-dashed bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-                            No cases yet. Use “Add case” to create one.
-                        </div>
-                    ) : null}
-                </CardContent>
-            </Card>
-        </div>
+                </div>
+                <DialogFooter>
+                    <Button
+                        variant="outline"
+                        onClick={() => onOpenChange(false)}
+                    >
+                        Cancel
+                    </Button>
+                    <Button
+                        disabled={isBusy}
+                        onClick={() => {
+                            void handleSave();
+                        }}
+                    >
+                        Save changes
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
     );
 }
 
-function CaseDetails({
+function CaseSummary({
     context,
     testCase,
-    onSave,
-    onDelete,
     onRun,
+    onDelete,
+    onEdit,
     isBusy,
 }: {
     context: EvaluationContext;
     testCase: EvaluationCase;
-    onSave: (updates: Partial<EvaluationCase>) => Promise<void>;
-    onDelete: () => Promise<void>;
     onRun: () => Promise<void>;
+    onDelete: () => Promise<void>;
+    onEdit: () => void;
     isBusy: boolean;
 }) {
-    const [title, setTitle] = useState(testCase.title);
-    const [description, setDescription] = useState(testCase.description ?? "");
-    const [userMessage, setUserMessage] = useState<
-        EvaluationCase["userMessage"]
-    >(testCase.userMessage);
-    const [assistantMessage, setAssistantMessage] = useState<
-        NonNullable<EvaluationCase["assistantMessage"]>
-    >(testCase.assistantMessage ?? { role: "assistant", content: [] });
-
-    useEffect(() => {
-        setTitle(testCase.title);
-        setDescription(testCase.description ?? "");
-        setUserMessage(testCase.userMessage);
-        setAssistantMessage(
-            testCase.assistantMessage ?? { role: "assistant", content: [] },
-        );
-    }, [testCase]);
-
-    const handleSave = async () => {
-        const trimmedAssistant =
-            assistantMessage.content.length > 0 ? assistantMessage : undefined;
-        await onSave({
-            title,
-            description,
-            userMessage,
-            assistantMessage: trimmedAssistant,
-        });
-    };
-
     const status = testCase.lastRunSummary?.status;
 
     return (
         <div className="space-y-6">
             <Card>
-                <CardHeader className="flex flex-row items-start justify-between gap-4">
-                    <div>
-                        <CardTitle>Case details</CardTitle>
+                <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="space-y-1">
+                        <CardTitle>{testCase.title}</CardTitle>
                         <CardDescription>
-                            Configure the user prompt and metadata for this
-                            case.
+                            {testCase.description ?? "No description provided."}
                         </CardDescription>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                         <Button
-                            variant="outline"
                             size="sm"
+                            variant="default"
                             disabled={isBusy}
-                            onClick={async () => {
-                                await onRun();
+                            onClick={() => {
+                                void onRun();
                             }}
                         >
                             <Play className="mr-2 size-4" />
                             Run case
                         </Button>
                         <Button
-                            variant="destructive"
                             size="sm"
+                            variant="outline"
                             disabled={isBusy}
-                            onClick={async () => {
-                                await onDelete();
+                            onClick={onEdit}
+                        >
+                            <Settings2 className="mr-2 size-4" />
+                            Edit
+                        </Button>
+                        <Button
+                            size="sm"
+                            variant="destructive"
+                            disabled={isBusy}
+                            onClick={() => {
+                                void onDelete();
                             }}
                         >
                             <Trash2 className="mr-2 size-4" />
                             Delete
                         </Button>
                     </div>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                    <div className="grid gap-4 md:grid-cols-2">
-                        <div className="space-y-2">
-                            <Label htmlFor="case-title">Title</Label>
-                            <Input
-                                id="case-title"
-                                value={title}
-                                onChange={(event) =>
-                                    setTitle(event.target.value)
-                                }
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="case-description">
-                                Description
-                            </Label>
-                            <Input
-                                id="case-description"
-                                value={description}
-                                onChange={(event) =>
-                                    setDescription(event.target.value)
-                                }
-                            />
-                        </div>
-                    </div>
-                    <MessageBuilder
-                        role="user"
-                        message={userMessage}
-                        onChange={(value) =>
-                            setUserMessage(
-                                value as EvaluationCase["userMessage"],
-                            )
-                        }
-                    />
-                    <Separator />
-                    <MessageBuilder
-                        role="assistant"
-                        message={assistantMessage}
-                        onChange={(value) =>
-                            setAssistantMessage(
-                                value as NonNullable<
-                                    EvaluationCase["assistantMessage"]
-                                >,
-                            )
-                        }
-                    />
-                    <div className="flex justify-end gap-2">
-                        <Button disabled={isBusy} onClick={handleSave}>
-                            Save changes
-                        </Button>
-                    </div>
-                </CardContent>
-            </Card>
-
-            <Card>
-                <CardHeader>
-                    <CardTitle>Metadata</CardTitle>
-                    <CardDescription>
-                        Runtime information about previous executions of this
-                        case.
-                    </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     <InfoRow
@@ -1713,7 +2239,6 @@ function CaseDetails({
                     ) : null}
                 </CardContent>
             </Card>
-
             <Card>
                 <CardHeader>
                     <CardTitle>Message preview</CardTitle>
@@ -1725,33 +2250,167 @@ function CaseDetails({
                 <CardContent className="space-y-4">
                     <PreviewSection
                         title="User message"
-                        message={userMessage}
+                        message={testCase.userMessage}
                     />
-                    {userMessage.providerOptions ? (
-                        <div>
-                            <h4 className="mb-2 text-sm font-semibold text-slate-700">
-                                Provider options
-                            </h4>
-                            <JsonViewer value={userMessage.providerOptions} />
-                        </div>
-                    ) : null}
-                    <PreviewSection
-                        title="Assistant message"
-                        message={assistantMessage}
-                    />
-                    {assistantMessage.providerOptions ? (
+                    {testCase.userMessage.providerOptions ? (
                         <div>
                             <h4 className="mb-2 text-sm font-semibold text-slate-700">
                                 Provider options
                             </h4>
                             <JsonViewer
-                                value={assistantMessage.providerOptions}
+                                value={testCase.userMessage.providerOptions}
+                            />
+                        </div>
+                    ) : null}
+                    {testCase.assistantMessage ? (
+                        <PreviewSection
+                            title="Assistant message"
+                            message={testCase.assistantMessage}
+                        />
+                    ) : (
+                        <div className="rounded-lg border bg-white px-4 py-3 text-sm text-slate-500 shadow-xs">
+                            No assistant hint configured.
+                        </div>
+                    )}
+                    {testCase.assistantMessage?.providerOptions ? (
+                        <div>
+                            <h4 className="mb-2 text-sm font-semibold text-slate-700">
+                                Assistant provider options
+                            </h4>
+                            <JsonViewer
+                                value={
+                                    testCase.assistantMessage.providerOptions
+                                }
                             />
                         </div>
                     ) : null}
                 </CardContent>
             </Card>
         </div>
+    );
+}
+
+function CaseEditDialog({
+    open,
+    onOpenChange,
+    context,
+    testCase,
+    onSave,
+    isBusy,
+}: {
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+    context: EvaluationContext;
+    testCase: EvaluationCase;
+    onSave: (updates: Partial<EvaluationCase>) => Promise<void>;
+    isBusy: boolean;
+}) {
+    const [title, setTitle] = useState(testCase.title);
+    const [description, setDescription] = useState(testCase.description ?? "");
+    const [userMessage, setUserMessage] = useState<
+        EvaluationCase["userMessage"]
+    >(testCase.userMessage);
+    const [assistantMessage, setAssistantMessage] = useState<
+        NonNullable<EvaluationCase["assistantMessage"]>
+    >(testCase.assistantMessage ?? { role: "assistant", content: [] });
+
+    useEffect(() => {
+        if (!open) return;
+        setTitle(testCase.title);
+        setDescription(testCase.description ?? "");
+        setUserMessage(testCase.userMessage);
+        setAssistantMessage(
+            testCase.assistantMessage ?? { role: "assistant", content: [] },
+        );
+    }, [open, testCase]);
+
+    const handleSave = async () => {
+        const trimmedAssistant =
+            assistantMessage.content.length > 0 ? assistantMessage : undefined;
+        await onSave({
+            title,
+            description,
+            userMessage,
+            assistantMessage: trimmedAssistant,
+        });
+        onOpenChange(false);
+    };
+
+    return (
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent className="max-h-[95vh] overflow-y-auto sm:max-w-3xl">
+                <DialogHeader>
+                    <DialogTitle>Edit case</DialogTitle>
+                    <DialogDescription>
+                        Configure prompts and expected outputs for{" "}
+                        <span className="font-medium">{context.name}</span>.
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-5">
+                    <div className="grid gap-4 md:grid-cols-2">
+                        <div className="space-y-2">
+                            <Label htmlFor="edit-case-title">Title</Label>
+                            <Input
+                                id="edit-case-title"
+                                value={title}
+                                onChange={(event) =>
+                                    setTitle(event.target.value)
+                                }
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="edit-case-description">
+                                Description
+                            </Label>
+                            <Input
+                                id="edit-case-description"
+                                value={description}
+                                onChange={(event) =>
+                                    setDescription(event.target.value)
+                                }
+                            />
+                        </div>
+                    </div>
+                    <MessageBuilder
+                        role="user"
+                        message={userMessage}
+                        onChange={(value) =>
+                            setUserMessage(
+                                value as EvaluationCase["userMessage"],
+                            )
+                        }
+                    />
+                    <Separator />
+                    <MessageBuilder
+                        role="assistant"
+                        message={assistantMessage}
+                        onChange={(value) =>
+                            setAssistantMessage(
+                                value as NonNullable<
+                                    EvaluationCase["assistantMessage"]
+                                >,
+                            )
+                        }
+                    />
+                </div>
+                <DialogFooter>
+                    <Button
+                        variant="outline"
+                        onClick={() => onOpenChange(false)}
+                    >
+                        Cancel
+                    </Button>
+                    <Button
+                        disabled={isBusy}
+                        onClick={() => {
+                            void handleSave();
+                        }}
+                    >
+                        Save changes
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
     );
 }
 

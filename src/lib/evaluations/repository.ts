@@ -23,7 +23,7 @@ type EvaluationResultRow = typeof evaluationResults.$inferSelect;
 
 const DEFAULT_JSON = "{}";
 
-const CURRENT_TIMESTAMP = () => Date.now();
+const CURRENT_TIMESTAMP = () => new Date();
 
 function toIso(value: unknown): string {
     if (!value) return new Date().toISOString();
