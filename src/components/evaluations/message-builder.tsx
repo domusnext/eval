@@ -125,6 +125,7 @@ export function MessageBuilder({
     message,
     onChange,
 }: MessageBuilderProps) {
+    const isHydratingRef = useRef(true);
     const [parts, setParts] = useState<DraftPart[]>(() =>
         normalizeMessageToParts(role, message),
     );
@@ -255,9 +256,9 @@ export function MessageBuilder({
             prev.map((part) =>
                 part.id === partId
                     ? ({
-                          ...part,
-                          ...updates,
-                      } as DraftPart)
+                        ...part,
+                        ...updates,
+                    } as DraftPart)
                     : part,
             ),
         );

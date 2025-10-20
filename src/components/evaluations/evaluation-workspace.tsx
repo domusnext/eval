@@ -46,6 +46,7 @@ import type {
     EvaluationCase,
     EvaluationContext,
     EvaluationVersion,
+    RunSummary,
 } from "@/lib/evaluations/models";
 import { cn } from "@/lib/utils";
 import { MessageBuilder } from "@/components/evaluations/message-builder";
@@ -70,6 +71,15 @@ type RunTrigger =
           contextIds: string[];
           caseIds: string[];
       };
+
+type CaseExecutionTarget = {
+    context: EvaluationContext;
+    testCase: EvaluationCase;
+};
+
+const DEFAULT_AGENT_BASE_URL = "http://localhost:8082";
+const AGENT_STREAM_PATH = "/agent/v1/chat/completion/stream";
+const TRACE_ID_HEADER = "TraceId";
 
 type StatusBadge = NonNullable<EvaluationCase["lastRunSummary"]>["status"];
 
