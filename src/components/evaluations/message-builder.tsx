@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
     FileIcon,
     ImageIcon,
@@ -143,7 +143,11 @@ export function MessageBuilder({
         Record<string, boolean>
     >({});
 
+    // Track if we're in the middle of syncing from external message prop
+    const isSyncingRef = useRef(false);
+
     useEffect(() => {
+        isSyncingRef.current = true;
         setParts(normalizeMessageToParts(role, message));
         setProviderOptionsText(
             message.providerOptions
@@ -154,31 +158,13 @@ export function MessageBuilder({
             message.providerOptions as ProviderOptions | undefined,
         );
         setProviderOptionsError(null);
+        // Reset sync flag after state updates
+        setTimeout(() => {
+            isSyncingRef.current = false;
+        }, 0);
     }, [message, role]);
 
-    useEffect(() => {
-        if (!providerOptionsText.trim()) {
-            setProviderOptions(undefined);
-            setProviderOptionsError(null);
-            return;
-        }
-
-        try {
-            const parsed = JSON.parse(providerOptionsText) as ProviderOptions;
-            setProviderOptions(parsed);
-            setProviderOptionsError(null);
-        } catch (error) {
-            setProviderOptionsError((error as Error).message);
-        }
-    }, [providerOptionsText]);
-
-    useEffect(() => {
-        if (providerOptionsError) return;
-        emitChange(parts, providerOptions);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [parts, providerOptions, providerOptionsError]);
-
-    const emitChange = (
+    const emitChange = useCallback((
         draftParts: DraftPart[],
         providerOptionsValue: ProviderOptions | undefined,
     ) => {
@@ -222,7 +208,29 @@ export function MessageBuilder({
             };
             onChange(payload);
         }
-    };
+    }, [onChange, role]);
+
+    useEffect(() => {
+        if (!providerOptionsText.trim()) {
+            setProviderOptions(undefined);
+            setProviderOptionsError(null);
+            return;
+        }
+
+        try {
+            const parsed = JSON.parse(providerOptionsText) as ProviderOptions;
+            setProviderOptions(parsed);
+            setProviderOptionsError(null);
+        } catch (error) {
+            setProviderOptionsError((error as Error).message);
+        }
+    }, [providerOptionsText]);
+
+    useEffect(() => {
+        // Don't emit changes when we're syncing from the external message prop
+        if (isSyncingRef.current || providerOptionsError) return;
+        emitChange(parts, providerOptions);
+    }, [parts, providerOptions, providerOptionsError, emitChange]);
 
     const setPartUploading = (partId: string, uploading: boolean) => {
         setUploadingPartIds((prev) => ({ ...prev, [partId]: uploading }));
