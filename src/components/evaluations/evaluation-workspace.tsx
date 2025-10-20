@@ -104,6 +104,83 @@ const statusLabelMap: Record<StatusBadge, string> = {
 
 const cloneData = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 
+const normalizeAgentBaseUrl = (baseUrl?: string | null): string => {
+    if (!baseUrl || !baseUrl.trim()) {
+        return DEFAULT_AGENT_BASE_URL;
+    }
+    return baseUrl.trim().replace(/\/+$/, "");
+};
+
+const toAgentMessageContent = (
+    message: EvaluationCase["userMessage"],
+): unknown[] => {
+    if (typeof message.content === "string") {
+        const trimmed = message.content.trim();
+        if (!trimmed) {
+            return [];
+        }
+        return [
+            {
+                type: "text",
+                text: trimmed,
+            },
+        ];
+    }
+    return cloneData(message.content ?? []);
+};
+
+const createAgentRecentMessage = (
+    message: EvaluationCase["userMessage"],
+): Record<string, unknown> | null => {
+    const content = toAgentMessageContent(message);
+    if (!content.length) {
+        return null;
+    }
+    const payload: Record<string, unknown> = {
+        role: message.role,
+        content,
+    };
+    if (
+        message.providerOptions &&
+        Object.keys(message.providerOptions).length > 0
+    ) {
+        payload["provider_options"] = cloneData(message.providerOptions);
+    }
+    return payload;
+};
+
+const buildAgentRequestBody = (
+    params: EvaluationContext["params"],
+    userMessage: EvaluationCase["userMessage"],
+): Record<string, unknown> => {
+    const payload = cloneData(params ?? {}) as Record<string, unknown>;
+    const agentMessage = createAgentRecentMessage(userMessage);
+    if (!agentMessage) {
+        throw new Error("User message is empty.");
+    }
+    const existingRecent = Array.isArray(payload["recent_messages"])
+        ? cloneData(payload["recent_messages"] as unknown[])
+        : [];
+    payload["recent_messages"] = [...existingRecent, agentMessage];
+    return payload;
+};
+
+const buildAgentRequestHeaders = (
+    headers: EvaluationContext["headers"],
+    traceId: string,
+): Record<string, string> => {
+    const merged: Record<string, string> = {
+        "Content-Type": "application/json",
+    };
+    for (const [key, value] of Object.entries(headers ?? {})) {
+        if (typeof value === "string" && value.length > 0) {
+            merged[key] = value;
+        }
+    }
+    merged[TRACE_ID_HEADER] = traceId;
+    return merged;
+};
+
 const RUN_CONFIG_STORAGE_KEY = "evaluation-run-config";
 
 interface EvaluationWorkspaceProps {
@@ -223,6 +300,40 @@ export function EvaluationWorkspace({
             return next;
         });
     }, []);
+
+    const updateCaseRunSummary = useCallback(
+        (
+            versionId: string,
+            contextId: string,
+            caseId: string,
+            summary: RunSummary,
+        ) => {
+            setVersionsState((prev) =>
+                prev.map((version) => {
+                    if (version.id !== versionId) return version;
+                    return {
+                        ...version,
+                        contexts: version.contexts.map((context) => {
+                            if (context.id !== contextId) return context;
+                            return {
+                                ...context,
+                                cases: context.cases.map((testCase) => {
+                                    if (testCase.id !== caseId) {
+                                        return testCase;
+                                    }
+                                    return {
+                                        ...testCase,
+                                        lastRunSummary: summary,
+                                    };
+                                }),
+                            };
+                        }),
+                    };
+                }),
+            );
+        },
+        [setVersionsState],
+    );
 
     const refreshTree = useCallback(async () => {
         setIsRefreshing(true);
@@ -753,49 +864,81 @@ export function EvaluationWorkspace({
         }
     };
 
-    const gatherCasesForRun = (trigger: RunTrigger): EvaluationCase[] => {
+    const gatherCasesForRun = (trigger: RunTrigger): CaseExecutionTarget[] => {
         if (!activeVersion) return [];
 
-        if (trigger.kind === "version") {
-            return activeVersion.contexts.flatMap((context) => context.cases);
-        }
+        const targetedCases = new Map<string, CaseExecutionTarget>();
 
-        if (trigger.kind === "context") {
-            const context = activeVersion.contexts.find(
-                (ctx) => ctx.id === trigger.contextId,
-            );
-            return context ? context.cases : [];
-        }
+        const addContextCases = (context?: EvaluationContext) => {
+            if (!context) return;
+            context.cases.forEach((testCase) => {
+                targetedCases.set(testCase.id, { context, testCase });
+            });
+        };
 
-        if (trigger.kind === "case") {
-            const context = activeVersion.contexts.find(
-                (ctx) => ctx.id === trigger.contextId,
-            );
-            const found = context?.cases.find(
-                (testCase) => testCase.id === trigger.caseId,
-            );
-            return found ? [found] : [];
-        }
-
-        const targetedCases = new Map<string, EvaluationCase>();
-        trigger.contextIds.forEach((contextId) => {
+        const addSpecificCase = (contextId: string, caseId: string) => {
             const context = activeVersion.contexts.find(
                 (ctx) => ctx.id === contextId,
             );
-            context?.cases.forEach((testCase) => {
-                targetedCases.set(testCase.id, testCase);
-            });
-        });
-        trigger.caseIds.forEach((caseId) => {
-            activeVersion.contexts.forEach((context) => {
-                const testCase = context.cases.find(
-                    (item) => item.id === caseId,
+            if (!context) return;
+            const testCase = context.cases.find(
+                (candidate) => candidate.id === caseId,
+            );
+            if (testCase) {
+                targetedCases.set(testCase.id, { context, testCase });
+            }
+        };
+
+        switch (trigger.kind) {
+            case "version": {
+                activeVersion.contexts.forEach((context) => {
+                    context.cases.forEach((testCase) => {
+                        targetedCases.set(testCase.id, { context, testCase });
+                    });
+                });
+                break;
+            }
+            case "context": {
+                addContextCases(
+                    activeVersion.contexts.find(
+                        (context) => context.id === trigger.contextId,
+                    ),
                 );
-                if (testCase) {
-                    targetedCases.set(caseId, testCase);
+                break;
+            }
+            case "case": {
+                addSpecificCase(trigger.contextId, trigger.caseId);
+                break;
+            }
+            case "selection": {
+                if (trigger.contextIds.length) {
+                    trigger.contextIds.forEach((contextId) => {
+                        addContextCases(
+                            activeVersion.contexts.find(
+                                (context) => context.id === contextId,
+                            ),
+                        );
+                    });
                 }
-            });
-        });
+                if (trigger.caseIds.length) {
+                    trigger.caseIds.forEach((caseId) => {
+                        activeVersion.contexts.forEach((context) => {
+                            const testCase = context.cases.find(
+                                (candidate) => candidate.id === caseId,
+                            );
+                            if (testCase) {
+                                targetedCases.set(testCase.id, {
+                                    context,
+                                    testCase,
+                                });
+                            }
+                        });
+                    });
+                }
+                break;
+            }
+        }
+
         return Array.from(targetedCases.values());
     };
 
@@ -812,59 +955,183 @@ export function EvaluationWorkspace({
 
         if (isMutating) return;
         setIsMutating(true);
+
+        let loadingToastId: string | undefined;
+
         try {
-            let contextIds: string[] | undefined;
-            let caseIds: string[] | undefined;
+            const versionId = activeVersion.id;
+            const agentEndpoint = `${normalizeAgentBaseUrl(
+                activeVersion.agentBaseUrl,
+            )}${AGENT_STREAM_PATH}`;
 
-            switch (trigger.kind) {
-                case "version":
-                    contextIds = undefined;
-                    caseIds = undefined;
-                    break;
-                case "context":
-                    contextIds = [trigger.contextId];
-                    break;
-                case "case":
-                    contextIds = [trigger.contextId];
-                    caseIds = [trigger.caseId];
-                    break;
-                case "selection":
-                    contextIds =
-                        trigger.contextIds.length > 0
-                            ? trigger.contextIds
-                            : undefined;
-                    caseIds =
-                        trigger.caseIds.length > 0
-                            ? trigger.caseIds
-                            : undefined;
-                    break;
+            const maxCases = Math.max(1, runConfig.maxCasesPerRun);
+            const casesToRun =
+                targets.length > maxCases ? targets.slice(0, maxCases) : targets;
+            if (!casesToRun.length) {
+                toast.error(
+                    "No cases available after applying the run configuration limits.",
+                );
+                return;
             }
+            const truncated = casesToRun.length < targets.length;
 
-            const { data } = await apiRequest<{
-                data: { runId: string; caseCount: number };
-            }>("/api/evaluations/run", {
-                method: "POST",
-                body: JSON.stringify({
-                    versionId: activeVersion.id,
-                    contextIds,
-                    caseIds,
-                    maxCasesPerRun: runConfig.maxCasesPerRun,
-                    concurrentRequests: runConfig.concurrentRequests,
-                }),
+            const concurrency = Math.min(
+                Math.max(1, runConfig.concurrentRequests),
+                casesToRun.length,
+            );
+
+            const runId =
+                typeof crypto !== "undefined" && "randomUUID" in crypto
+                    ? crypto.randomUUID()
+                    : `eval-run-${Date.now()}-${Math.random()
+                          .toString(16)
+                          .slice(2)}`;
+
+            const errors: { title: string; message: string }[] = [];
+            let successCount = 0;
+            let failureCount = 0;
+
+            loadingToastId = toast.loading(
+                `Running ${casesToRun.length} case(s) for ${friendlyLabel}...`,
+            );
+
+            const executeSingleCase = async (
+                target: CaseExecutionTarget,
+                index: number,
+            ) => {
+                const { context, testCase } = target;
+                const startedAt = performance.now();
+
+                updateCaseRunSummary(versionId, context.id, testCase.id, {
+                    status: "running",
+                });
+
+                const traceId = `${runId}-${index + 1}-${Date.now()}`;
+
+                try {
+                    const requestBody = buildAgentRequestBody(
+                        context.params,
+                        testCase.userMessage,
+                    );
+                    const headers = buildAgentRequestHeaders(
+                        context.headers,
+                        traceId,
+                    );
+
+                    const response = await fetch(agentEndpoint, {
+                        method: "POST",
+                        body: JSON.stringify(requestBody),
+                        headers,
+                    });
+
+                    if (!response.ok) {
+                        const errorText = await response.text().catch(() => "");
+                        throw new Error(
+                            errorText ||
+                                `Agent responded with status ${response.status}`,
+                        );
+                    }
+
+                    const reader = response.body?.getReader();
+                    if (!reader) {
+                        throw new Error(
+                            "No response body reader available from agent.",
+                        );
+                    }
+
+                    const decoder = new TextDecoder();
+                    let done = false;
+                    while (!done) {
+                        const { value, done: readerDone } = await reader.read();
+                        if (value) {
+                            decoder.decode(value, { stream: !readerDone });
+                        }
+                        done = readerDone;
+                    }
+                    decoder.decode();
+
+                    const durationMs = Math.round(performance.now() - startedAt);
+
+                    successCount += 1;
+                    updateCaseRunSummary(versionId, context.id, testCase.id, {
+                        status: "succeeded",
+                        durationMs,
+                        completedAt: new Date().toISOString(),
+                    });
+                } catch (error) {
+                    const durationMs = Math.round(performance.now() - startedAt);
+                    failureCount += 1;
+                    const message =
+                        error instanceof Error ? error.message : String(error);
+                    errors.push({ title: testCase.title, message });
+                    updateCaseRunSummary(versionId, context.id, testCase.id, {
+                        status: "failed",
+                        durationMs,
+                        completedAt: new Date().toISOString(),
+                    });
+                    console.error(
+                        `Failed to run case "${testCase.title}":`,
+                        error,
+                    );
+                }
+            };
+
+            let cursor = 0;
+            const workers = Array.from({ length: concurrency }, async () => {
+                while (true) {
+                    const currentIndex = cursor;
+                    cursor += 1;
+                    if (currentIndex >= casesToRun.length) {
+                        break;
+                    }
+                    await executeSingleCase(
+                        casesToRun[currentIndex],
+                        currentIndex,
+                    );
+                }
             });
 
-            await refreshTree();
+            await Promise.all(workers);
 
-            if (data?.runId) {
+            if (loadingToastId) {
+                toast.dismiss(loadingToastId);
+                loadingToastId = undefined;
+            }
+
+            if (successCount && !failureCount) {
                 toast.success(
-                    `Run ${data.runId} completed for ${data.caseCount} case(s) in ${friendlyLabel}.`,
+                    `Completed ${successCount} case(s) for ${friendlyLabel}.`,
                 );
-            } else {
-                toast.success(
-                    `Queued ${targets.length} case(s) for ${friendlyLabel}.`,
+            } else if (!successCount && failureCount) {
+                toast.error(
+                    `Failed to run ${failureCount} case(s) for ${friendlyLabel}.`,
+                );
+            } else if (successCount && failureCount) {
+                toast(
+                    `Completed ${successCount} case(s) with ${failureCount} failure(s) for ${friendlyLabel}.`,
                 );
             }
+
+            if (truncated) {
+                toast(
+                    `Limited execution to ${casesToRun.length} case(s) per run configuration.`,
+                );
+            }
+
+            if (errors.length) {
+                console.groupCollapsed(
+                    `[Evaluation run] ${errors.length} failure(s)`,
+                );
+                errors.forEach((entry) => {
+                    console.error(`${entry.title}: ${entry.message}`);
+                });
+                console.groupEnd();
+            }
         } catch (error) {
+            if (loadingToastId) {
+                toast.dismiss(loadingToastId);
+                loadingToastId = undefined;
+            }
             const message =
                 error instanceof Error
                     ? error.message
