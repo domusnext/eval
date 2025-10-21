@@ -1,0 +1,78 @@
+
+> eval-app@0.1.0 dev
+> next dev
+
+ ⚠ Warning: Found multiple lockfiles. Selecting /Users/cozi/package-lock.json.
+   Consider removing the lockfiles at:
+   * /Users/cozi/Documents/Agent/eval/pnpm-lock.yaml
+
+   ▲ Next.js 15.4.6
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.31.199:3000
+
+ ✓ Starting...
+ ✓ Ready in 1805ms
+ ○ Compiling /evaluations ...
+ ✓ Compiled /evaluations in 2.1s (1029 modules)
+ GET /evaluations 200 in 2430ms
+ GET /evaluations 200 in 107ms
+ ✓ Compiled /favicon.ico in 283ms (690 modules)
+ GET /favicon.ico 200 in 370ms
+ ✓ Compiled in 530ms (1029 modules)
+ GET /evaluations 200 in 205ms
+ ⨯ [TypeError: __webpack_modules__[moduleId] is not a function] {
+  digest: '4160123768'
+}
+[TypeError: __webpack_modules__[moduleId] is not a function]
+ ⨯ [TypeError: __webpack_modules__[moduleId] is not a function]
+ ⨯ [TypeError: __webpack_modules__[moduleId] is not a function] {
+  page: '/evaluations'
+}
+ ○ Compiling /_error ...
+ ✓ Compiled /_error in 824ms (1451 modules)
+ GET /evaluations 200 in 526ms
+ GET /evaluations 200 in 28ms
+ GET /evaluations 200 in 24ms
+ GET /evaluations 500 in 1766ms
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 509ms (1442 modules)
+ ✓ Compiled /favicon.ico in 314ms (965 modules)
+ GET /favicon.ico 200 in 407ms
+ GET /evaluations 200 in 233ms
+ GET /_next/static/css/app/layout.css?v=1760972537256 404 in 23ms
+ GET /_next/static/chunks/app/evaluations/page.js 404 in 39ms
+ GET /_next/static/chunks/app-pages-internals.js 404 in 40ms
+ GET /_next/static/chunks/main-app.js?v=1760972537256 404 in 41ms
+ GET /favicon.ico 200 in 8ms
+ GET /evaluations 200 in 89ms
+ GET /_next/static/css/app/layout.css?v=1760972549198 404 in 22ms
+ GET /_next/static/chunks/app/evaluations/page.js 404 in 52ms
+ GET /_next/static/chunks/app-pages-internals.js 404 in 53ms
+ GET /_next/static/chunks/main-app.js?v=1760972549198 404 in 54ms
+ GET /favicon.ico 200 in 9ms
+ GET /evaluations 200 in 78ms
+ GET /_next/static/css/app/layout.css?v=1760972551012 404 in 20ms
+ GET /_next/static/chunks/main-app.js?v=1760972551012 404 in 49ms
+ GET /_next/static/chunks/app/evaluations/page.js 404 in 50ms
+ GET /_next/static/chunks/app-pages-internals.js 404 in 50ms
+ GET /favicon.ico 200 in 4ms
+ GET /evaluations 200 in 142ms
+ GET /_next/static/css/app/layout.css?v=1760972577375 404 in 18ms
+ GET /_next/static/chunks/app-pages-internals.js 404 in 46ms
+ GET /_next/static/chunks/app/evaluations/page.js 404 in 47ms
+ GET /_next/static/chunks/main-app.js?v=1760972577375 404 in 48ms
+ GET /favicon.ico 200 in 10ms
+ GET /evaluations 200 in 77ms
+ GET /_next/static/css/app/layout.css?v=1760972578185 404 in 20ms
+ GET /_next/static/chunks/main-app.js?v=1760972578185 404 in 51ms
+ GET /_next/static/chunks/app-pages-internals.js 404 in 51ms
+ GET /_next/static/chunks/app/evaluations/page.js 404 in 50ms
+ GET /favicon.ico 200 in 5ms
+ ⚠ Found a change in next.config.ts. Restarting the server to apply the changes...
+   ▲ Next.js 15.4.6
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.31.199:3000
+
+ ✓ Starting...
+ ✓ Ready in 1922ms
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename '/Users/cozi/Documents/Agent/eval/.next/cache/webpack/client-development/0.pack.gz_' -> '/Users/cozi/Documents/Agent/eval/.next/cache/webpack/client-development/0.pack.gz'

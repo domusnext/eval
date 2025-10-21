@@ -1,0 +1,81 @@
+
+> eval-app@0.1.0 dev
+> next dev
+
+ ⚠ Warning: Found multiple lockfiles. Selecting /Users/cozi/package-lock.json.
+   Consider removing the lockfiles at:
+   * /Users/cozi/Documents/Agent/eval/pnpm-lock.yaml
+
+   ▲ Next.js 15.4.6
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.31.199:3000
+
+ ✓ Starting...
+ ✓ Ready in 1659ms
+ ○ Compiling /evaluations ...
+ ✓ Compiled /evaluations in 1987ms (1029 modules)
+ GET /evaluations 200 in 2310ms
+ ✓ Compiled /favicon.ico in 464ms (690 modules)
+ GET /favicon.ico 200 in 546ms
+ GET /evaluations 200 in 238ms
+ ✓ Compiled in 524ms (1029 modules)
+ GET /evaluations 200 in 140ms
+ ⨯ [TypeError: __webpack_modules__[moduleId] is not a function] {
+  digest: '4160123768'
+}
+[TypeError: __webpack_modules__[moduleId] is not a function]
+ ⨯ [TypeError: __webpack_modules__[moduleId] is not a function]
+ ⨯ [TypeError: __webpack_modules__[moduleId] is not a function] {
+  page: '/evaluations'
+}
+ ○ Compiling /_error ...
+ ✓ Compiled /_error in 777ms (1451 modules)
+ GET /evaluations 200 in 520ms
+ GET /evaluations 200 in 23ms
+ GET /evaluations 200 in 17ms
+ GET /evaluations 500 in 1667ms
+ ✓ Compiled /_not-found in 452ms (1442 modules)
+ ✓ Compiled /favicon.ico in 330ms (965 modules)
+ GET /favicon.ico 200 in 410ms
+ GET /evaluations 200 in 338ms
+ GET /_next/static/css/app/layout.css?v=1760971767700 404 in 28ms
+ GET /_next/static/chunks/main-app.js?v=1760971767700 404 in 55ms
+ GET /_next/static/chunks/app/evaluations/page.js 404 in 54ms
+ GET /_next/static/chunks/app-pages-internals.js 404 in 55ms
+ GET /favicon.ico 200 in 7ms
+ GET /evaluations 200 in 70ms
+ GET /_next/static/css/app/layout.css?v=1760971775882 404 in 22ms
+ GET /_next/static/chunks/app-pages-internals.js 404 in 45ms
+ GET /_next/static/chunks/main-app.js?v=1760971775882 404 in 46ms
+ GET /_next/static/chunks/app/evaluations/page.js 404 in 46ms
+ GET /favicon.ico 200 in 5ms
+ GET /evaluations 200 in 66ms
+ GET /_next/static/css/app/layout.css?v=1760971776816 404 in 17ms
+ GET /_next/static/chunks/main-app.js?v=1760971776816 404 in 46ms
+ GET /_next/static/chunks/app/evaluations/page.js 404 in 45ms
+ GET /_next/static/chunks/app-pages-internals.js 404 in 45ms
+ GET /favicon.ico 200 in 5ms
+ GET /evaluations 200 in 67ms
+ GET /_next/static/css/app/layout.css?v=1760971777648 404 in 29ms
+ GET /_next/static/chunks/main-app.js?v=1760971777648 404 in 58ms
+ GET /_next/static/chunks/app-pages-internals.js 404 in 57ms
+ GET /_next/static/chunks/app/evaluations/page.js 404 in 57ms
+ GET /favicon.ico 200 in 10ms
+ GET /evaluations 200 in 86ms
+ GET /_next/static/css/app/layout.css?v=1760971791151 404 in 23ms
+ GET /_next/static/chunks/main-app.js?v=1760971791151 404 in 53ms
+ GET /_next/static/chunks/app-pages-internals.js 404 in 52ms
+ GET /_next/static/chunks/app/evaluations/page.js 404 in 53ms
+ GET /favicon.ico 200 in 26ms
+ GET /evaluations 200 in 87ms
+ GET /_next/static/css/app/layout.css?v=1760971855818 404 in 20ms
+ GET /_next/static/chunks/app-pages-internals.js 404 in 55ms
+ GET /_next/static/chunks/app/evaluations/page.js 404 in 54ms
+ GET /_next/static/chunks/main-app.js?v=1760971855818 404 in 56ms
+ GET /favicon.ico 200 in 32ms
+ GET /evaluations 200 in 63ms
+ GET /_next/static/css/app/layout.css?v=1760971857701 404 in 18ms
+ GET /_next/static/chunks/main-app.js?v=1760971857701 404 in 48ms
+ GET /_next/static/chunks/app/evaluations/page.js 404 in 49ms
+ GET /_next/static/chunks/app-pages-internals.js 404 in 47ms
+ GET /favicon.ico 200 in 5ms

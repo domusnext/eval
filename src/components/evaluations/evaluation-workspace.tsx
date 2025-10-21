@@ -77,7 +77,7 @@ type CaseExecutionTarget = {
     testCase: EvaluationCase;
 };
 
-const DEFAULT_AGENT_BASE_URL = "http://localhost:8082";
+const DEFAULT_AGENT_BASE_URL = "/api/agent"; // Use Next.js proxy to avoid CORS
 const AGENT_STREAM_PATH = "/agent/v1/chat/completion/stream";
 const TRACE_ID_HEADER = "TraceId";
 
@@ -1018,11 +1018,20 @@ export function EvaluationWorkspace({
                         traceId,
                     );
 
-                    const response = await fetch(agentEndpoint, {
-                        method: "POST",
-                        body: JSON.stringify(requestBody),
-                        headers,
-                    });
+                    let response: Response;
+                    try {
+                        response = await fetch(agentEndpoint, {
+                            method: "POST",
+                            body: JSON.stringify(requestBody),
+                            headers,
+                        });
+                    } catch (fetchError) {
+                        throw new Error(
+                            `Failed to connect to agent at ${agentEndpoint}. ` +
+                                `Please ensure the agent service is running. ` +
+                                `Error: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`,
+                        );
+                    }
 
                     if (!response.ok) {
                         const errorText = await response.text().catch(() => "");
@@ -1040,15 +1049,18 @@ export function EvaluationWorkspace({
                     }
 
                     const decoder = new TextDecoder();
+                    let responseContent = "";
                     let done = false;
                     while (!done) {
                         const { value, done: readerDone } = await reader.read();
                         if (value) {
-                            decoder.decode(value, { stream: !readerDone });
+                            const chunk = decoder.decode(value, { stream: !readerDone });
+                            responseContent += chunk;
                         }
                         done = readerDone;
                     }
-                    decoder.decode();
+                    // Final flush of decoder
+                    responseContent += decoder.decode();
 
                     const durationMs = Math.round(performance.now() - startedAt);
 
@@ -1057,6 +1069,7 @@ export function EvaluationWorkspace({
                         status: "succeeded",
                         durationMs,
                         completedAt: new Date().toISOString(),
+                        responseContent,
                     });
                 } catch (error) {
                     const durationMs = Math.round(performance.now() - startedAt);
@@ -2481,88 +2494,73 @@ function CaseSummary({
                         </Button>
                     </div>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                    <InfoRow
-                        icon={<Database className="size-4 text-slate-500" />}
-                        label="Context"
-                        value={context.name}
-                    />
-                    {status ? (
-                        <InfoRow
-                            icon={
+                <CardContent>
+                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg bg-slate-50 px-4 py-3">
+                        <div className="flex items-center gap-2">
+                            <Database className="size-4 text-slate-500" />
+                            <span className="text-xs uppercase tracking-wider text-slate-500">
+                                Context:
+                            </span>
+                            <span className="text-sm font-medium text-slate-900">
+                                {context.name}
+                            </span>
+                        </div>
+                        {status && (
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs uppercase tracking-wider text-slate-500">
+                                    Status:
+                                </span>
                                 <Badge variant={statusVariantMap[status]}>
                                     {statusLabelMap[status]}
                                 </Badge>
+                            </div>
+                        )}
+                        {testCase.lastRunSummary?.durationMs && (
+                            <div className="flex items-center gap-2">
+                                <Clock className="size-4 text-slate-500" />
+                                <span className="text-xs uppercase tracking-wider text-slate-500">
+                                    Duration:
+                                </span>
+                                <span className="text-sm font-medium text-slate-900">
+                                    {testCase.lastRunSummary.durationMs} ms
+                                </span>
+                            </div>
+                        )}
+                        {testCase.lastRunSummary?.completedAt && (
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs uppercase tracking-wider text-slate-500">
+                                    Completed:
+                                </span>
+                                <span className="text-sm font-medium text-slate-900">
+                                    {formatDate(
+                                        testCase.lastRunSummary.completedAt,
+                                    )}
+                                </span>
+                            </div>
+                        )}
+                    </div>
+                </CardContent>
+            </Card>
+            <div className="rounded-lg border bg-white p-6 shadow-sm">
+                <UserMessageDisplay message={testCase.userMessage} />
+            </div>
+            {testCase.lastRunSummary?.responseContent ? (
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Response content</CardTitle>
+                        <CardDescription>
+                            Stream response from the agent (session storage only, not persisted).
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <SSEResponseViewer
+                            responseContent={
+                                testCase.lastRunSummary.responseContent
                             }
-                            label="Last status"
-                            value={statusLabelMap[status]}
                         />
-                    ) : null}
-                    {testCase.lastRunSummary?.durationMs ? (
-                        <InfoRow
-                            icon={<Clock className="size-4 text-slate-500" />}
-                            label="Last duration"
-                            value={`${testCase.lastRunSummary.durationMs} ms`}
-                        />
-                    ) : null}
-                    {testCase.lastRunSummary?.completedAt ? (
-                        <InfoRow
-                            icon={<Clock className="size-4 text-slate-500" />}
-                            label="Completed at"
-                            value={formatDate(
-                                testCase.lastRunSummary.completedAt,
-                            )}
-                        />
-                    ) : null}
-                </CardContent>
-            </Card>
-            <Card>
-                <CardHeader>
-                    <CardTitle>Message preview</CardTitle>
-                    <CardDescription>
-                        Structured payload sent to the downstream agent when
-                        this case runs.
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <PreviewSection
-                        title="User message"
-                        message={testCase.userMessage}
-                    />
-                    {testCase.userMessage.providerOptions ? (
-                        <div>
-                            <h4 className="mb-2 text-sm font-semibold text-slate-700">
-                                Provider options
-                            </h4>
-                            <JsonViewer
-                                value={testCase.userMessage.providerOptions}
-                            />
-                        </div>
-                    ) : null}
-                    {testCase.assistantMessage ? (
-                        <PreviewSection
-                            title="Assistant message"
-                            message={testCase.assistantMessage}
-                        />
-                    ) : (
-                        <div className="rounded-lg border bg-white px-4 py-3 text-sm text-slate-500 shadow-xs">
-                            No assistant hint configured.
-                        </div>
-                    )}
-                    {testCase.assistantMessage?.providerOptions ? (
-                        <div>
-                            <h4 className="mb-2 text-sm font-semibold text-slate-700">
-                                Assistant provider options
-                            </h4>
-                            <JsonViewer
-                                value={
-                                    testCase.assistantMessage.providerOptions
-                                }
-                            />
-                        </div>
-                    ) : null}
-                </CardContent>
-            </Card>
+                    </CardContent>
+                </Card>
+            ) : null}
         </div>
     );
 }
@@ -2724,19 +2722,94 @@ function InfoRow({
     );
 }
 
-function PreviewSection({
-    title,
+// Simplified component for displaying user message without nested borders
+function UserMessageDisplay({
     message,
 }: {
-    title: string;
-    message:
-        | EvaluationCase["userMessage"]
-        | NonNullable<EvaluationCase["assistantMessage"]>;
+    message: EvaluationCase["userMessage"];
 }) {
+    if (typeof message.content === "string") {
+        return (
+            <div className="text-base text-slate-900 whitespace-pre-wrap break-words">
+                {message.content.trim().length > 0 ? (
+                    message.content
+                ) : (
+                    <span className="text-slate-400">Empty content</span>
+                )}
+            </div>
+        );
+    }
+
+    if (!message.content.length) {
+        return (
+            <div className="text-sm text-slate-500">
+                No parts configured.
+            </div>
+        );
+    }
+
     return (
-        <div className="space-y-2">
-            <h4 className="text-sm font-semibold text-slate-700">{title}</h4>
-            <MessagePreview message={message} />
+        <div className="space-y-4">
+            {message.content.map((part, index) => {
+                if (part.type === "text") {
+                    return (
+                        <div
+                            key={`${part.type}-${index}`}
+                            className="text-base text-slate-900 whitespace-pre-wrap break-words"
+                        >
+                            {part.text}
+                        </div>
+                    );
+                }
+
+                if (part.type === "image") {
+                    return (
+                        <div
+                            key={`${part.type}-${index}`}
+                            className="space-y-2"
+                        >
+                            <div className="flex items-center gap-2 text-xs text-slate-500">
+                                <span>Image:</span>
+                                <span className="truncate max-w-[400px]">
+                                    {part.url}
+                                </span>
+                            </div>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                                src={part.url}
+                                alt={part.alt ?? ""}
+                                className="max-w-full h-auto rounded-md border"
+                            />
+                            {part.alt && (
+                                <p className="text-sm text-slate-600">
+                                    {part.alt}
+                                </p>
+                            )}
+                        </div>
+                    );
+                }
+
+                if (part.type === "file") {
+                    return (
+                        <div
+                            key={`${part.type}-${index}`}
+                            className="flex items-center gap-2 text-sm text-slate-700"
+                        >
+                            <span className="text-slate-500">File:</span>
+                            <a
+                                href={part.url}
+                                className="text-primary underline"
+                                target="_blank"
+                                rel="noreferrer"
+                            >
+                                {part.name ?? part.url}
+                            </a>
+                        </div>
+                    );
+                }
+
+                return null;
+            })}
         </div>
     );
 }
@@ -2881,5 +2954,291 @@ function formatBytes(bytes?: number, decimals = 1) {
 function formatDate(value: string) {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleString();
+    return date.toLocaleString("en-US", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+    });
+}
+
+// SSE Response Types
+interface SSEEvent {
+    type?: string;
+    timestamp?: string;
+    agentName?: string;
+    toolName?: string;
+    input?: unknown;
+    output?: unknown;
+    text?: string;
+    delta?: string;
+    success?: boolean;
+    error?: string;
+    [key: string]: unknown;
+}
+
+// Parse SSE response into structured events
+function parseSSEResponse(responseText: string): SSEEvent[] {
+    const lines = responseText.split("\n");
+    const events: SSEEvent[] = [];
+
+    for (const line of lines) {
+        if (line.startsWith("data: ")) {
+            try {
+                const jsonStr = line.substring(6);
+                const event = JSON.parse(jsonStr) as SSEEvent;
+                events.push(event);
+            } catch {
+                // Skip invalid JSON lines
+            }
+        }
+    }
+
+    return events;
+}
+
+// Extract agent name from SSE events
+function extractAgentName(events: SSEEvent[]): string | null {
+    for (const event of events) {
+        if (event.agentName) {
+            return event.agentName;
+        }
+    }
+    return null;
+}
+
+// Check if response contains any failures
+function hasResponseFailure(events: SSEEvent[]): boolean {
+    function checkFailure(obj: unknown): boolean {
+        if (obj === null || obj === undefined) return false;
+        if (typeof obj !== "object") return false;
+
+        const record = obj as Record<string, unknown>;
+        if ("success" in record && record.success === false) {
+            return true;
+        }
+
+        for (const value of Object.values(record)) {
+            if (typeof value === "object" && value !== null) {
+                if (checkFailure(value)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    return events.some((event) => checkFailure(event));
+}
+
+// Helper functions for SSE response viewer
+function isCollapsibleEvent(event: SSEEvent): boolean {
+    const type = event.type || "";
+    return (
+        type.includes("start") ||
+        type.includes("finish") ||
+        type.includes("end") ||
+        type === "tool-input-delta"
+    );
+}
+
+function getEventBorderColor(type: string): string {
+    if (type.includes("start")) return "border-blue-500";
+    if (type.includes("finish") || type.includes("end"))
+        return "border-purple-500";
+    if (type === "text-delta") return "border-orange-500";
+    if (type === "tool-call") return "border-cyan-500";
+    if (type === "tool-result") return "border-green-500";
+    if (type.includes("error")) return "border-red-500";
+    return "border-gray-500";
+}
+
+function getEventLabel(event: SSEEvent): string | null {
+    const type = event.type || "";
+    if (type.includes("start")) return "START";
+    if (type.includes("finish") || type.includes("end")) return "END";
+    if (type === "tool-input-delta") return "TOOL INPUT";
+    return null;
+}
+
+function highlightImportantKeys(obj: unknown): string {
+    const json = JSON.stringify(obj, null, 2);
+    const importantKeys = [
+        "agentName",
+        "toolName",
+        "input",
+        "text",
+        "success",
+        "output",
+        "error",
+    ];
+
+    let highlighted = json;
+    importantKeys.forEach((key) => {
+        const regex = new RegExp(`"(${key})"(?=:)`, "g");
+        highlighted = highlighted.replace(regex, `**"$1"**`);
+    });
+
+    return highlighted;
+}
+
+// Component to display organized SSE response
+function SSEResponseViewer({ responseContent }: { responseContent: string }) {
+    const [showHidden, setShowHidden] = useState(false);
+    const [expandedEvents, setExpandedEvents] = useState<Set<number>>(
+        new Set(),
+    );
+
+    const events = useMemo(() => parseSSEResponse(responseContent), [
+        responseContent,
+    ]);
+    const agentName = useMemo(() => extractAgentName(events), [events]);
+    const hasFailure = useMemo(() => hasResponseFailure(events), [events]);
+
+    const toggleEvent = useCallback((index: number) => {
+        setExpandedEvents((prev) => {
+            const next = new Set(prev);
+            if (next.has(index)) {
+                next.delete(index);
+            } else {
+                next.add(index);
+            }
+            return next;
+        });
+    }, []);
+
+    return (
+        <div className="space-y-3">
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                    {agentName && (
+                        <Badge variant="outline" className="font-mono text-xs">
+                            Agent: {agentName}
+                        </Badge>
+                    )}
+                    {hasFailure && (
+                        <Badge variant="destructive" className="text-xs">
+                            Has Failures
+                        </Badge>
+                    )}
+                    <Badge variant="secondary" className="text-xs">
+                        {events.length} events
+                    </Badge>
+                </div>
+                <label className="flex items-center gap-2 text-xs text-slate-600">
+                    <Checkbox
+                        checked={showHidden}
+                        onCheckedChange={(checked) =>
+                            setShowHidden(checked === true)
+                        }
+                    />
+                    Show hidden events
+                </label>
+            </div>
+
+            <div className="space-y-2">
+                {events.map((event, index) => {
+                    const type = event.type || "unknown";
+                    const isCollapsible = isCollapsibleEvent(event);
+                    const isHidden = isCollapsible && !showHidden;
+                    const isExpanded = expandedEvents.has(index);
+                    const borderColor = getEventBorderColor(type);
+                    const label = getEventLabel(event);
+
+                    if (isHidden) return null;
+
+                    const eventData = { ...event };
+                    delete eventData.type;
+                    delete eventData.timestamp;
+
+                    return (
+                        <div
+                            key={index}
+                            className={`rounded border-l-4 bg-white p-3 shadow-sm ${borderColor} ${
+                                isCollapsible ? "cursor-pointer" : ""
+                            }`}
+                            onClick={
+                                isCollapsible
+                                    ? () => toggleEvent(index)
+                                    : undefined
+                            }
+                        >
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <span className="font-mono text-xs font-bold uppercase text-slate-700">
+                                        {type}
+                                    </span>
+                                    {label && (
+                                        <Badge
+                                            variant="secondary"
+                                            className="text-[10px]"
+                                        >
+                                            {label}
+                                        </Badge>
+                                    )}
+                                    {isCollapsible && (
+                                        <span className="text-xs text-slate-400">
+                                            {isExpanded ? "▼" : "▶"}
+                                        </span>
+                                    )}
+                                </div>
+                                {event.timestamp && (
+                                    <span className="text-xs text-slate-400">
+                                        {new Date(
+                                            event.timestamp,
+                                        ).toLocaleTimeString()}
+                                    </span>
+                                )}
+                            </div>
+
+                            {(!isCollapsible || isExpanded) && (
+                                <div className="mt-2">
+                                    <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs text-slate-700">
+                                        {highlightImportantKeys(eventData)
+                                            .split("\n")
+                                            .map((line, i) => {
+                                                const match =
+                                                    line.match(/\*\*"(.+?)"\*\*/);
+                                                if (match) {
+                                                    const parts = line.split(
+                                                        /\*\*"(.+?)"\*\*/,
+                                                    );
+                                                    return (
+                                                        <div key={i} className="break-words">
+                                                            {parts.map(
+                                                                (part, j) =>
+                                                                    j % 2 ===
+                                                                    1 ? (
+                                                                        <strong
+                                                                            key={j}
+                                                                            className="rounded bg-slate-200 px-1"
+                                                                        >
+                                                                            &quot;
+                                                                            {
+                                                                                part
+                                                                            }
+                                                                            &quot;
+                                                                        </strong>
+                                                                    ) : (
+                                                                        part
+                                                                    ),
+                                                            )}
+                                                        </div>
+                                                    );
+                                                }
+                                                return <div key={i} className="break-words">{line}</div>;
+                                            })}
+                                    </pre>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
 }

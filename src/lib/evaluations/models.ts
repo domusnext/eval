@@ -11,6 +11,7 @@ export type RunSummary = {
     status: RunStatus;
     durationMs?: number;
     completedAt?: string;
+    responseContent?: string;
 };
 
 export type EvaluationCase = {
