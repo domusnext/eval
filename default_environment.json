@@ -1,0 +1,193 @@
+{
+  "environment": {
+    "family_info": {
+      "family_id": "09a097f6-d708-49e4-8ccf-a78cab898ba0",
+      "name": "袁老板的家",
+      "roles": [
+        {
+          "family_role_id": "d822b1c4-ab4e-45fd-82cb-94d90b8fba5b",
+          "role_name": "Emily Wilson (Daughter of Robert & Linda)",
+          "user_id": null,
+          "role_nickname": "Emily",
+          "birthday": "2025-09-23T00:00:00Z"
+        },
+        {
+          "family_role_id": "1bbcecb8-6f46-42e7-865c-16723d9c47b6",
+          "role_name": "Sarah Carter (Wife of Michael)",
+          "user_id": null,
+          "role_nickname": "Sarah",
+          "birthday": "2025-09-23T00:00:00Z"
+        },
+        {
+          "family_role_id": "2f79a65d-a03b-4c90-990a-f228573e3f2f",
+          "role_name": " Amy Carter(Grandchildren/Great-Grandchildren)",
+          "user_id": null,
+          "role_nickname": "Amy",
+          "birthday": "2025-09-23T00:00:00Z"
+        },
+        {
+          "family_role_id": "b5e770ed-66d2-4709-b6a2-97e181c860e1",
+          "role_name": "Sophie Wilson (Daughter of Emily & David)",
+          "user_id": null,
+          "role_nickname": "Sophie",
+          "birthday": "2025-09-23T00:00:00Z"
+        },
+        {
+          "family_role_id": "ec317d70-961c-4539-82be-983fefbe1a66",
+          "role_name": "Ethan Wilson (Son of Emily & David)",
+          "user_id": null,
+          "role_nickname": "Ethan",
+          "birthday": "2025-09-23T00:00:00Z"
+        },
+        {
+          "family_role_id": "17bf5096-a556-4979-83ca-5154abbaa3dd",
+          "role_name": "Olivia Carter (Daughter of Michael & Sarah)",
+          "user_id": null,
+          "role_nickname": "Olivia",
+          "birthday": "2025-09-23T00:00:00Z"
+        },
+        {
+          "family_role_id": "16886181-ca88-4c7b-9783-e31a1cff8f31",
+          "role_name": "Noah Carter (Son of Michael & Sarah)",
+          "user_id": null,
+          "role_nickname": "Noah",
+          "birthday": "2025-09-23T00:00:00Z"
+        },
+        {
+          "family_role_id": "824d21c8-e9d0-409a-910b-dd1773c1f88b",
+          "role_name": "Bella (Great-Grandparent)",
+          "user_id": null,
+          "role_nickname": "Bella",
+          "birthday": "2025-09-23T00:00:00Z"
+        },
+        {
+          "family_role_id": "5f509eed-d4fd-476c-8a72-ccdbe19bdc85",
+          "role_name": "Robert Carter (Son of Margaret)",
+          "user_id": null,
+          "role_nickname": "Robert",
+          "birthday": "2025-09-23T00:00:00Z"
+        },
+        {
+          "family_role_id": "38211834-fd4f-4147-a57e-5762e7642488",
+          "role_name": "Linda Carter (Wife of Robert)",
+          "user_id": null,
+          "role_nickname": "Linda",
+          "birthday": "2025-09-23T00:00:00Z"
+        },
+        {
+          "family_role_id": "086366c2-7845-4412-b430-570fbd08196f",
+          "role_name": "Heisenberg (Grandparent)",
+          "user_id": "a7a2dfb9-0995-489a-929e-88be06e1bf2f",
+          "role_nickname": "Heisenberg",
+          "birthday": "1985-03-15T00:00:00Z"
+        },
+        {
+          "family_role_id": "0a3f2af0-999f-4d91-a035-3b2c0dbf373d",
+          "role_name": "David Wilson (Husband of Emily)",
+          "user_id": null,
+          "role_nickname": "David",
+          "birthday": "2025-09-23T00:00:00Z"
+        },
+        {
+          "family_role_id": "b80bab36-501f-4445-a667-f396ecdfd00f",
+          "role_name": "Michael Carter (Son of Robert & Linda)",
+          "user_id": null,
+          "role_nickname": "Michael",
+          "birthday": "2025-09-23T00:00:00Z"
+        }
+      ],
+      "location": "上海市浦东新区陆家嘴金融中心",
+      "locale": "Asia/Shanghai"
+    },
+    "user_brief": {
+      "task": {
+        "task_lists": [
+          {
+            "task_list_id": "626726a9-fe42-4607-ae2d-3128d598bf6a",
+            "name": "hello",
+            "description": null
+          },
+          {
+            "task_list_id": "8873bb27-0675-4952-afdc-b3ef6e59bc6e",
+            "name": "folder2",
+            "description": null
+          },
+          {
+            "task_list_id": "f63a1c94-ec0c-4d72-ac74-4f463b3f747c",
+            "name": "知乎",
+            "description": null
+          },
+          {
+            "task_list_id": "b1e379b7-7698-43af-8b5a-f71a4084ad39",
+            "name": "other",
+            "description": null
+          },
+          {
+            "task_list_id": "e1671fb3-a4a9-4f8f-ac7f-60ed4dc5e180",
+            "name": "other",
+            "description": null
+          },
+          {
+            "task_list_id": "1c149ac5-2027-409c-8cee-1f3f0eba294d",
+            "name": "fdsf",
+            "description": null
+          },
+          {
+            "task_list_id": "2aa82d71-b8c5-4730-a16d-53ea28207919",
+            "name": "fdsf",
+            "description": null
+          },
+          {
+            "task_list_id": "9143c0d8-5875-4e60-9eac-61cc6f730d79",
+            "name": "fdsf",
+            "description": null
+          },
+          {
+            "task_list_id": "cf27c897-d9fa-4d62-816f-ce48cc09feae",
+            "name": "fdsf",
+            "description": null
+          },
+          {
+            "task_list_id": "a67192c3-a0ce-4f70-affb-cb26d2e0cfbb",
+            "name": "fdsf",
+            "description": null
+          },
+          {
+            "task_list_id": "37aaa6cd-a28e-477d-a940-9f69122c51b1",
+            "name": "fdsf",
+            "description": null
+          },
+          {
+            "task_list_id": "ec370438-0eaf-460b-8ba9-d085f12f0b28",
+            "name": "fdsf",
+            "description": null
+          },
+          {
+            "task_list_id": "9cd41ac9-0828-418a-a16f-7cc58da185ff",
+            "name": "fdsf",
+            "description": null
+          }
+        ]
+      },
+      "calendar": {
+        "default_calendar": {
+          "calendar_id": "f8b94cfc-9070-4814-849b-02cb0d050764",
+          "name": "Family Calendar",
+          "description": null
+        }
+      }
+    },
+    "chat_info": {
+      "conversation_id": "89ffae50-7ee6-49af-ba4b-35ceb6a3f5f8",
+      "turn_id": "9348ee45-7512-4943-81bc-dbbb3a53923a",
+      "user_ui_message_id": "cde621ab-e707-4b5d-9ac4-8de66bd11478",
+      "assistant_ui_message_id": "cc5a8f76-21e1-4557-8266-180017d32573"
+    }
+  },
+  "headers": {
+    "X-Family-ID": "09a097f6-d708-49e4-8ccf-a78cab898ba0",
+    "X-Timezone": "Asia/Shanghai",
+    "X-User-ID": "a7a2dfb9-0995-489a-929e-88be06e1bf2f",
+    "TraceId": "dsafsdfasdf"
+  }
+}

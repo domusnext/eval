@@ -23,30 +23,51 @@ export const evaluationVersions = sqliteTable("evaluation_versions", {
         .default(currentTimestampMs),
 });
 
-export const evaluationContexts = sqliteTable("evaluation_contexts", {
-    id: text("id").primaryKey(),
-    name: text("name").notNull(),
-    description: text("description"),
-    paramsJson: text("params_json").notNull(),
-    headersJson: text("headers_json").notNull(),
-    orderIndex: integer("order_index").notNull().default(0),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-        .notNull()
-        .default(currentTimestampMs),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-        .notNull()
-        .default(currentTimestampMs),
-});
+export const evaluationContexts = sqliteTable(
+    "evaluation_contexts",
+    {
+        id: text("id").primaryKey(),
+        name: text("name").notNull(),
+        description: text("description"),
+
+        // 树状结构
+        parentContextId: text("parent_context_id").references(
+            (): any => evaluationContexts.id,
+            { onDelete: "cascade" }
+        ),
+        depth: integer("depth").notNull().default(0),
+        childCount: integer("child_count").notNull().default(0),
+
+        // 配置（增量存储）
+        environmentJson: text("environment_json").notNull().default("{}"),
+        headersJson: text("headers_json").notNull().default("{}"),
+        recentMessagesJson: text("recent_messages_json").notNull().default("[]"),
+        contextSummary: text("context_summary"),
+
+        createdAt: integer("created_at", { mode: "timestamp_ms" })
+            .notNull()
+            .default(currentTimestampMs),
+        updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+            .notNull()
+            .default(currentTimestampMs),
+    },
+    (table) => ({
+        parentContextIdIdx: index("evaluation_contexts_parent_idx").on(
+            table.parentContextId
+        ),
+        depthIdx: index("evaluation_contexts_depth_idx").on(table.depth),
+    })
+);
 
 export const evaluationCases = sqliteTable("evaluation_cases", {
     id: text("id").primaryKey(),
-    contextId: text("context_id")
+    rootContextId: text("root_context_id")
         .notNull()
         .references(() => evaluationContexts.id, { onDelete: "cascade" }),
     title: text("title").notNull(),
     description: text("description"),
     userMessageJson: text("user_message_json").notNull(),
-    assistantMessageJson: text("assistant_message_json"),
+    evalRule: text("eval_rule"),
     metadataJson: text("metadata_json").notNull(),
     orderIndex: integer("order_index").notNull().default(0),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
@@ -82,6 +103,8 @@ export const evaluationResults = sqliteTable("evaluation_results", {
         .default("pending"),
     requestPayload: text("request_payload").notNull(),
     responseJson: text("response_json").notNull(),
+    resultOverview: text("result_overview"),
+    score: integer("score"),
     latencyMs: integer("latency_ms"),
     startedAt: integer("started_at", { mode: "timestamp_ms" }),
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),

@@ -1,0 +1,1 @@
+export const AI_GATEWAY_API_KEY= "vck_0MrIi2DLGhlJE8QoWAjy6jJavscxZDRPtcgJggdNV6SslAY4a94b6Ikz"

@@ -78,25 +78,51 @@ const createDraftPart = (type: MessagePart["type"]): DraftPart => {
 const normalizeMessageToParts = (
     role: MessageRole,
     message: UserModelMessage | AssistantModelMessage,
+    existingParts?: DraftPart[],
 ): DraftPart[] => {
     if (role === "user") {
         const content = (message as UserModelMessage).content;
         if (typeof content === "string") {
+            // Reuse existing ID if the content matches
+            const existingTextPart = existingParts?.find(
+                (p) => p.type === "text" && p.text === content
+            );
             return [
                 {
-                    id: crypto.randomUUID(),
+                    id: existingTextPart?.id ?? crypto.randomUUID(),
                     type: "text",
                     text: content,
                 },
             ];
         }
-        return content.map((part) => ({ ...part, id: crypto.randomUUID() }));
+        return content.map((part, index) => {
+            // Try to find a matching existing part by index and content
+            const existingPart = existingParts?.[index];
+            const shouldReuseId = existingPart &&
+                existingPart.type === part.type &&
+                JSON.stringify({ ...existingPart, id: undefined }) ===
+                JSON.stringify({ ...part, id: undefined });
+
+            return {
+                ...part,
+                id: shouldReuseId ? existingPart.id : crypto.randomUUID()
+            };
+        });
     }
 
-    return (message as AssistantModelMessage).content.map((part) => ({
-        ...part,
-        id: crypto.randomUUID(),
-    }));
+    return (message as AssistantModelMessage).content.map((part, index) => {
+        // Try to find a matching existing part by index and content
+        const existingPart = existingParts?.[index];
+        const shouldReuseId = existingPart &&
+            existingPart.type === part.type &&
+            JSON.stringify({ ...existingPart, id: undefined }) ===
+            JSON.stringify({ ...part, id: undefined });
+
+        return {
+            ...part,
+            id: shouldReuseId ? existingPart.id : crypto.randomUUID(),
+        };
+    });
 };
 
 async function uploadToR2(
@@ -127,7 +153,7 @@ export function MessageBuilder({
 }: MessageBuilderProps) {
     const isHydratingRef = useRef(true);
     const [parts, setParts] = useState<DraftPart[]>(() =>
-        normalizeMessageToParts(role, message),
+        normalizeMessageToParts(role, message, undefined),
     );
     const [providerOptionsText, setProviderOptionsText] = useState(() =>
         message.providerOptions
@@ -149,7 +175,7 @@ export function MessageBuilder({
 
     useEffect(() => {
         isSyncingRef.current = true;
-        setParts(normalizeMessageToParts(role, message));
+        setParts((currentParts) => normalizeMessageToParts(role, message, currentParts));
         setProviderOptionsText(
             message.providerOptions
                 ? JSON.stringify(message.providerOptions, null, 2)

@@ -33,14 +33,14 @@ export async function PATCH(
             title?: string;
             description?: string | null;
             userMessage?: unknown;
-            assistantMessage?: unknown;
+            evalRule?: string;
         };
 
         await updateEvaluationCase(caseId, {
             title: body?.title,
             description: body?.description ?? undefined,
             userMessage: body?.userMessage as any,
-            assistantMessage: body?.assistantMessage as any,
+            evalRule: body?.evalRule,
         });
 
         return NextResponse.json({ success: true });

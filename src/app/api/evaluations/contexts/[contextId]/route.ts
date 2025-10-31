@@ -24,15 +24,15 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         const body = (await request.json().catch(() => ({}))) as {
             name?: string;
             description?: string | null;
-            params?: Record<string, unknown>;
+            environment?: Record<string, unknown>;
             headers?: Record<string, string>;
         };
 
         await updateEvaluationContext(contextId, {
             name: body?.name,
             description: body?.description ?? undefined,
-            params: body?.params ?? {},
-            headers: body?.headers ?? {},
+            environment: body?.environment,
+            headers: body?.headers,
         });
 
         return NextResponse.json({ success: true });

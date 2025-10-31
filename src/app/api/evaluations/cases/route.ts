@@ -12,18 +12,18 @@ export async function POST(request: NextRequest) {
             );
         }
         const body = (await request.json().catch(() => ({}))) as {
-            contextId?: string;
+            rootContextId?: string;
             title?: string;
             description?: string | null;
         };
-        if (!body?.contextId || typeof body.contextId !== "string") {
+        if (!body?.rootContextId || typeof body.rootContextId !== "string") {
             return NextResponse.json(
-                { error: "Missing contextId" },
+                { error: "Missing rootContextId" },
                 { status: 400 },
             );
         }
         const id = await createEvaluationCase({
-            contextId: body.contextId,
+            rootContextId: body.rootContextId,
             title: body?.title,
             description: body?.description ?? undefined,
         });
