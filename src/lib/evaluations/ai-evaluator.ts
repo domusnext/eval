@@ -22,6 +22,15 @@ export async function evaluateResponse(
     console.log(`[AI Evaluator] Eval Rule: ${evalRule.substring(0, 100)}...`);
     console.log(`[AI Evaluator] Response length: ${responseContent.length} chars`);
 
+    // 获取当前日期和星期几
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const weekday = weekdays[now.getDay()];
+    const dateString = `${year}-${month}-${day} (${weekday})`;
+
     const contextBackground = contextSummary
         ? `Context Background:\n${contextSummary}\n\n`
         : "";
@@ -39,6 +48,8 @@ Please evaluate the response and provide your assessment in the following JSON f
   "resultOverview": "First, summarize what the AI response did in 1-2 sentences.\\n\\nThen, explain whether it satisfies the evaluation rule and why (2-3 sentences).",
   "score": 1 or 0
 }
+
+Current Date: ${dateString}
 
 Guidelines:
 - score: 1 if the response satisfies the evaluation rule, 0 if it does not

@@ -14,6 +14,7 @@ import {
     Save,
     Settings2,
     Sparkles,
+    Square,
     Trash2,
     Upload,
 } from "lucide-react";
@@ -63,7 +64,6 @@ type SelectedNode =
     | { type: "case"; contextId: string; caseId: string };
 
 type RunConfig = {
-    maxCasesPerRun: number;
     concurrentRequests: number;
 };
 
@@ -155,6 +155,116 @@ const createAgentRecentMessage = (
     return payload;
 };
 
+// Score calculation utilities
+type ScoreStats = {
+    averageScore: number | null;
+    totalItems: number;
+    scoredItems: number;
+    scoreSum: number;
+    passCount: number;
+};
+
+/**
+ * 递归计算 Context 的得分统计
+ * 计分逻辑：整体平均 = (所有子context得分总和 + 所有直属case得分总和) / (子context数 + case数)
+ */
+const calculateContextScore = (
+    context: EvaluationContext
+): ScoreStats => {
+    let totalItems = 0;
+    let scoredItems = 0;
+    let scoreSum = 0;
+    let passCount = 0;
+
+    // 1. 收集所有直属 cases 的得分
+    if (context.cases && context.cases.length > 0) {
+        context.cases.forEach((testCase) => {
+            const score = testCase.lastRunSummary?.score;
+            if (score !== undefined && score !== null) {
+                totalItems += 1;
+                scoredItems += 1;
+                scoreSum += score;
+                if (score === 1) {
+                    passCount += 1;
+                }
+            } else {
+                // Case exists but not scored yet
+                totalItems += 1;
+            }
+        });
+    }
+
+    // 2. 递归收集所有子 contexts 的得分
+    if (context.children && context.children.length > 0) {
+        context.children.forEach((child) => {
+            const childStats = calculateContextScore(child);
+            totalItems += childStats.totalItems;
+            scoredItems += childStats.scoredItems;
+            scoreSum += childStats.scoreSum;
+            passCount += childStats.passCount;
+        });
+    }
+
+    // 3. 计算平均分
+    const averageScore = scoredItems > 0 ? scoreSum / scoredItems : null;
+
+    return {
+        averageScore,
+        totalItems,
+        scoredItems,
+        scoreSum,
+        passCount,
+    };
+};
+
+/**
+ * 计算 Version 的总体得分统计
+ */
+const calculateVersionScore = (
+    version: EvaluationVersion
+): ScoreStats => {
+    let totalItems = 0;
+    let scoredItems = 0;
+    let scoreSum = 0;
+    let passCount = 0;
+
+    // 遍历所有根 contexts，递归累加统计
+    version.rootContexts.forEach((context) => {
+        const contextStats = calculateContextScore(context);
+        totalItems += contextStats.totalItems;
+        scoredItems += contextStats.scoredItems;
+        scoreSum += contextStats.scoreSum;
+        passCount += contextStats.passCount;
+    });
+
+    const averageScore = scoredItems > 0 ? scoreSum / scoredItems : null;
+
+    return {
+        averageScore,
+        totalItems,
+        scoredItems,
+        scoreSum,
+        passCount,
+    };
+};
+
+/**
+ * 格式化得分显示
+ */
+const formatScore = (score: number | null): string => {
+    if (score === null) return "N/A";
+    return score.toFixed(2);
+};
+
+/**
+ * 格式化通过率显示
+ */
+const formatPassRate = (passCount: number, totalCount: number): string => {
+    if (totalCount === 0) return "N/A";
+    const rate = (passCount / totalCount) * 100;
+    return `${rate.toFixed(0)}%`;
+};
+
 const buildAgentRequestBody = (
     environment: EvaluationContext["environment"],
     resolvedMessages: EvaluationContext["resolvedMessages"],
@@ -200,7 +310,7 @@ const buildAgentRequestHeaders = (
     return merged;
 };
 
-const RUN_CONFIG_STORAGE_KEY = "evaluation-run-config";
+const RUN_CONFIG_STORAGE_KEY = "evaluation-run-config-v2";
 
 interface EvaluationWorkspaceProps {
     initialVersions: EvaluationVersion[];
@@ -229,14 +339,15 @@ export function EvaluationWorkspace({
         () => new Set(),
     );
     const [runConfig, setRunConfig] = useState<RunConfig>({
-        maxCasesPerRun: 10,
-        concurrentRequests: 4,
+        concurrentRequests: 5,
     });
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [isMutating, setIsMutating] = useState(false);
     const [isRunConfigDialogOpen, setRunConfigDialogOpen] = useState(false);
     const [isVersionDialogOpen, setVersionDialogOpen] = useState(false);
     const [isContextDialogOpen, setContextDialogOpen] = useState(false);
+    const [isRunning, setIsRunning] = useState(false);
+    const abortControllerRef = useRef<AbortController | null>(null);
     const [caseDialogTarget, setCaseDialogTarget] = useState<{
         contextId: string;
         caseId: string;
@@ -403,18 +514,12 @@ export function EvaluationWorkspace({
             if (!stored) return;
             const parsed = JSON.parse(stored) as Partial<RunConfig>;
             setRunConfig((prev) => {
-                const maxCases =
-                    typeof parsed.maxCasesPerRun === "number" &&
-                    Number.isFinite(parsed.maxCasesPerRun)
-                        ? Math.max(1, Math.floor(parsed.maxCasesPerRun))
-                        : prev.maxCasesPerRun;
                 const concurrent =
                     typeof parsed.concurrentRequests === "number" &&
                     Number.isFinite(parsed.concurrentRequests)
                         ? Math.max(1, Math.floor(parsed.concurrentRequests))
                         : prev.concurrentRequests;
                 return {
-                    maxCasesPerRun: maxCases,
                     concurrentRequests: concurrent,
                 };
             });
@@ -1003,6 +1108,13 @@ export function EvaluationWorkspace({
     };
 
     const runCases = async (trigger: RunTrigger, friendlyLabel: string) => {
+        // If already running, abort the current run
+        if (isRunning && abortControllerRef.current) {
+            abortControllerRef.current.abort();
+            setIsRunning(false);
+            return;
+        }
+
         if (!activeVersion) {
             toast.error("Select a version before running cases");
             return;
@@ -1014,7 +1126,13 @@ export function EvaluationWorkspace({
         }
 
         if (isMutating) return;
+
+        // Create new AbortController for this run
+        const abortController = new AbortController();
+        abortControllerRef.current = abortController;
+
         setIsMutating(true);
+        setIsRunning(true);
 
         let loadingToastId: string | undefined;
 
@@ -1024,16 +1142,7 @@ export function EvaluationWorkspace({
                 activeVersion.agentBaseUrl,
             )}${AGENT_STREAM_PATH}`;
 
-            const maxCases = Math.max(1, runConfig.maxCasesPerRun);
-            const casesToRun =
-                targets.length > maxCases ? targets.slice(0, maxCases) : targets;
-            if (!casesToRun.length) {
-                toast.error(
-                    "No cases available after applying the run configuration limits.",
-                );
-                return;
-            }
-            const truncated = casesToRun.length < targets.length;
+            const casesToRun = targets;
 
             const concurrency = Math.min(
                 Math.max(1, runConfig.concurrentRequests),
@@ -1087,8 +1196,13 @@ export function EvaluationWorkspace({
                             method: "POST",
                             body: JSON.stringify(requestBody),
                             headers,
+                            signal: abortController.signal,
                         });
                     } catch (fetchError) {
+                        // Check if this was an abort
+                        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+                            throw fetchError;
+                        }
                         throw new Error(
                             `Failed to connect to agent at ${agentEndpoint}. ` +
                                 `Please ensure the agent service is running. ` +
@@ -1256,6 +1370,11 @@ export function EvaluationWorkspace({
             let cursor = 0;
             const workers = Array.from({ length: concurrency }, async () => {
                 while (true) {
+                    // Check if aborted
+                    if (abortController.signal.aborted) {
+                        break;
+                    }
+
                     const currentIndex = cursor;
                     cursor += 1;
                     if (currentIndex >= casesToRun.length) {
@@ -1289,12 +1408,6 @@ export function EvaluationWorkspace({
                 );
             }
 
-            if (truncated) {
-                toast(
-                    `Limited execution to ${casesToRun.length} case(s) per run configuration.`,
-                );
-            }
-
             if (errors.length) {
                 console.groupCollapsed(
                     `[Evaluation run] ${errors.length} failure(s)`,
@@ -1305,6 +1418,11 @@ export function EvaluationWorkspace({
                 console.groupEnd();
             }
         } catch (error) {
+            // Check if this was an abort
+            if (error instanceof Error && error.name === 'AbortError') {
+                toast('Run stopped by user', { duration: 3000 });
+                return;
+            }
             if (loadingToastId) {
                 toast.dismiss(loadingToastId);
                 loadingToastId = undefined;
@@ -1316,6 +1434,8 @@ export function EvaluationWorkspace({
             toast.error(message);
         } finally {
             setIsMutating(false);
+            setIsRunning(false);
+            abortControllerRef.current = null;
         }
     };
 
@@ -1402,7 +1522,7 @@ export function EvaluationWorkspace({
                         <Button
                             size="sm"
                             className="w-full justify-center"
-                            variant="default"
+                            variant={isRunning ? "destructive" : "default"}
                             onClick={() => {
                                 if (!activeVersion) {
                                     toast.error("No version selected");
@@ -1421,12 +1541,21 @@ export function EvaluationWorkspace({
                             }}
                             disabled={
                                 !activeVersion ||
-                                (!selectedContextCount && !selectedCaseCount) ||
-                                isBusy
+                                (!selectedContextCount && !selectedCaseCount && !isRunning) ||
+                                (isBusy && !isRunning)
                             }
                         >
-                            <Play className="mr-2 size-4" />
-                            Run Selected
+                            {isRunning ? (
+                                <>
+                                    <Square className="mr-2 size-4" />
+                                    Stop
+                                </>
+                            ) : (
+                                <>
+                                    <Play className="mr-2 size-4" />
+                                    Run Selected
+                                </>
+                            )}
                         </Button>
                     </div>
                 </div>
@@ -1489,17 +1618,17 @@ export function EvaluationWorkspace({
                                     <div className="inline-flex overflow-hidden rounded-md border bg-white shadow-sm">
                                         <Button
                                             size="sm"
-                                            variant="default"
+                                            variant={isRunning ? "destructive" : "default"}
                                             className="rounded-none rounded-l-md"
                                             disabled={
-                                                !canRunSelection ||
+                                                (!canRunSelection && !isRunning) ||
                                                 !activeVersion ||
-                                                isBusy
+                                                (isBusy && !isRunning)
                                             }
                                             onClick={() => {
                                                 if (
                                                     !activeVersion ||
-                                                    !canRunSelection
+                                                    (!canRunSelection && !isRunning)
                                                 ) {
                                                     return;
                                                 }
@@ -1521,8 +1650,17 @@ export function EvaluationWorkspace({
                                                 );
                                             }}
                                         >
-                                            <Play className="mr-2 size-4" />
-                                            Run selected
+                                            {isRunning ? (
+                                                <>
+                                                    <Square className="mr-2 size-4" />
+                                                    Stop
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Play className="mr-2 size-4" />
+                                                    Run selected
+                                                </>
+                                            )}
                                         </Button>
                                         <Button
                                             size="sm"
@@ -1626,6 +1764,7 @@ export function EvaluationWorkspace({
                             <VersionSummary
                                 version={activeVersion}
                                 isBusy={isBusy}
+                                isRunning={isRunning}
                                 onEdit={() => setVersionDialogOpen(true)}
                                 onDelete={() =>
                                     handleDeleteVersion(activeVersion.id)
@@ -1646,6 +1785,7 @@ export function EvaluationWorkspace({
                             <ContextSummary
                                 context={selectedContext}
                                 isBusy={isBusy}
+                                isRunning={isRunning}
                                 onEdit={() => {
                                     if (!selectedContext) return;
                                     setContextDialogOpen(true);
@@ -1698,6 +1838,7 @@ export function EvaluationWorkspace({
                                 context={selectedContext}
                                 testCase={selectedCase}
                                 isBusy={isBusy}
+                                isRunning={isRunning}
                                 onRun={() =>
                                     runCases(
                                         {
@@ -1820,32 +1961,10 @@ function RunConfigDialog({
                 <DialogHeader>
                     <DialogTitle>Run configuration</DialogTitle>
                     <DialogDescription>
-                        Configure concurrency and batch sizing shared by all
-                        evaluation runs.
+                        Configure concurrency for evaluation runs. All selected cases will be executed.
                     </DialogDescription>
                 </DialogHeader>
                 <div className="grid gap-4">
-                    <div className="space-y-2">
-                        <Label htmlFor="run-config-batch">
-                            Cases per batch
-                        </Label>
-                        <Input
-                            id="run-config-batch"
-                            type="number"
-                            min={1}
-                            value={runConfig.maxCasesPerRun}
-                            onChange={(event) =>
-                                handleNumberChange(
-                                    "maxCasesPerRun",
-                                    event.target.value,
-                                )
-                            }
-                        />
-                        <p className="text-xs text-slate-500">
-                            Controls how many cases are processed sequentially
-                            in each batch.
-                        </p>
-                    </div>
                     <div className="space-y-2">
                         <Label htmlFor="run-config-concurrency">
                             Concurrent requests
@@ -1864,7 +1983,7 @@ function RunConfigDialog({
                         />
                         <p className="text-xs text-slate-500">
                             Maximum number of parallel requests issued to the
-                            downstream agent.
+                            downstream agent. Click the Run button again during execution to stop.
                         </p>
                     </div>
                 </div>
@@ -1887,17 +2006,22 @@ function VersionSummary({
     onRun,
     onDelete,
     isBusy,
+    isRunning,
 }: {
     version: EvaluationVersion;
     onEdit: () => void;
     onRun: () => Promise<void>;
     onDelete: () => Promise<void>;
     isBusy: boolean;
+    isRunning: boolean;
 }) {
     const totalCases = version.rootContexts.reduce(
         (acc, context) => acc + (context.cases?.length || 0),
         0,
     );
+
+    // 计算得分统计
+    const scoreStats = calculateVersionScore(version);
 
     return (
         <Card>
@@ -1917,14 +2041,23 @@ function VersionSummary({
                 <div className="flex flex-wrap gap-2">
                     <Button
                         size="sm"
-                        variant="default"
-                        disabled={isBusy}
+                        variant={isRunning ? "destructive" : "default"}
+                        disabled={isBusy && !isRunning}
                         onClick={() => {
                             void onRun();
                         }}
                     >
-                        <Play className="mr-2 size-4" />
-                        Run version
+                        {isRunning ? (
+                            <>
+                                <Square className="mr-2 size-4" />
+                                Stop
+                            </>
+                        ) : (
+                            <>
+                                <Play className="mr-2 size-4" />
+                                Run version
+                            </>
+                        )}
                     </Button>
                     <Button
                         size="sm"
@@ -1949,12 +2082,26 @@ function VersionSummary({
                 </div>
             </CardHeader>
             <CardContent className="space-y-6">
-                <div className="grid gap-4 sm:grid-cols-3">
+                <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
                     <StatTile
                         label="Contexts"
                         value={`${version.rootContexts.length}`}
                     />
                     <StatTile label="Cases" value={`${totalCases}`} />
+                    <StatTile
+                        label="Average Score"
+                        value={formatScore(scoreStats.averageScore)}
+                    />
+                    <StatTile
+                        label="Scored"
+                        value={`${scoreStats.scoredItems}/${scoreStats.totalItems}`}
+                    />
+                    <StatTile
+                        label="Pass Rate"
+                        value={formatPassRate(scoreStats.passCount, scoreStats.scoredItems)}
+                    />
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
                     <StatTile
                         label="Agent endpoint"
                         value={version.agentBaseUrl ?? "—"}
@@ -2141,6 +2288,7 @@ function VersionEditDialog({
 function ContextSummary({
     context,
     isBusy,
+    isRunning,
     onEdit,
     onRun,
     onDelete,
@@ -2153,6 +2301,7 @@ function ContextSummary({
 }: {
     context: EvaluationContext;
     isBusy: boolean;
+    isRunning: boolean;
     onEdit: () => void;
     onRun: () => Promise<void>;
     onDelete: () => Promise<void>;
@@ -2167,6 +2316,9 @@ function ContextSummary({
     const isChildContext = !!context.parentContextId;
     const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
     const [isBatchAddDialogOpen, setBatchAddDialogOpen] = useState(false);
+
+    // 计算当前 Context 的得分统计
+    const scoreStats = calculateContextScore(context);
 
     const handleGenerateSummary = async () => {
         setIsGeneratingSummary(true);
@@ -2228,14 +2380,23 @@ function ContextSummary({
                 <div className="flex flex-wrap gap-2">
                     <Button
                         size="sm"
-                        variant="default"
-                        disabled={isBusy}
+                        variant={isRunning ? "destructive" : "default"}
+                        disabled={isBusy && !isRunning}
                         onClick={() => {
                             void onRun();
                         }}
                     >
-                        <Play className="mr-2 size-4" />
-                        Run context
+                        {isRunning ? (
+                            <>
+                                <Square className="mr-2 size-4" />
+                                Stop
+                            </>
+                        ) : (
+                            <>
+                                <Play className="mr-2 size-4" />
+                                Run context
+                            </>
+                        )}
                     </Button>
                     <Button
                         size="sm"
@@ -2335,6 +2496,31 @@ function ContextSummary({
                             {context.cases?.length || 0} total
                         </span>
                     </div>
+                    {/* Score Statistics */}
+                    {scoreStats.totalItems > 0 && (
+                        <div className="rounded-lg border bg-slate-50 px-4 py-3">
+                            <div className="flex items-center gap-6 text-sm">
+                                <div className="flex items-center gap-2">
+                                    <span className="text-slate-600">Average Score:</span>
+                                    <span className="font-semibold text-slate-900">
+                                        {formatScore(scoreStats.averageScore)}
+                                    </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-slate-600">Scored:</span>
+                                    <span className="font-semibold text-slate-900">
+                                        {scoreStats.scoredItems}/{scoreStats.totalItems}
+                                    </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-slate-600">Pass Rate:</span>
+                                    <span className="font-semibold text-slate-900">
+                                        {formatPassRate(scoreStats.passCount, scoreStats.scoredItems)}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                     <div className="space-y-2">
                             {context.cases?.map((testCase) => {
                             const status = testCase.lastRunSummary?.status;
@@ -2611,6 +2797,7 @@ function CaseSummary({
     onDelete,
     onEdit,
     isBusy,
+    isRunning,
     onRefresh,
     versionId,
 }: {
@@ -2620,6 +2807,7 @@ function CaseSummary({
     onDelete: () => Promise<void>;
     onEdit: () => void;
     isBusy: boolean;
+    isRunning: boolean;
     onRefresh: () => Promise<void>;
     versionId: string;
 }) {
@@ -2727,14 +2915,23 @@ function CaseSummary({
                     <div className="flex flex-wrap gap-2">
                         <Button
                             size="sm"
-                            variant="default"
-                            disabled={isBusy}
+                            variant={isRunning ? "destructive" : "default"}
+                            disabled={isBusy && !isRunning}
                             onClick={() => {
                                 void onRun();
                             }}
                         >
-                            <Play className="mr-2 size-4" />
-                            Run case
+                            {isRunning ? (
+                                <>
+                                    <Square className="mr-2 size-4" />
+                                    Stop
+                                </>
+                            ) : (
+                                <>
+                                    <Play className="mr-2 size-4" />
+                                    Run case
+                                </>
+                            )}
                         </Button>
                         <Button
                             size="sm"

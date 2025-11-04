@@ -31,6 +31,73 @@ const statusEmojiMap: Record<string, string> = {
     timeout: "⏱",
 };
 
+/**
+ * 递归计算 Context 的平均得分和通过率
+ */
+function calculateContextScore(context: EvaluationContext): {
+    averageScore: number | null;
+    passRate: number | null;
+    scoredCount: number;
+    totalCount: number;
+} {
+    let totalItems = 0;
+    let scoredItems = 0;
+    let scoreSum = 0;
+    let passCount = 0;
+
+    // 收集所有直属 cases 的得分
+    if (context.cases && context.cases.length > 0) {
+        context.cases.forEach((testCase) => {
+            const score = testCase.lastRunSummary?.score;
+            if (score !== undefined && score !== null) {
+                totalItems += 1;
+                scoredItems += 1;
+                scoreSum += score;
+                if (score === 1) {
+                    passCount += 1;
+                }
+            } else {
+                totalItems += 1;
+            }
+        });
+    }
+
+    // 递归收集所有子 contexts 的得分
+    if (context.children && context.children.length > 0) {
+        context.children.forEach((child) => {
+            const childStats = calculateContextScore(child);
+            totalItems += childStats.totalCount;
+            scoredItems += childStats.scoredCount;
+            if (childStats.averageScore !== null) {
+                scoreSum += childStats.averageScore * childStats.scoredCount;
+            }
+            if (childStats.passRate !== null) {
+                passCount += childStats.passRate * childStats.scoredCount;
+            }
+        });
+    }
+
+    const averageScore = scoredItems > 0 ? scoreSum / scoredItems : null;
+    const passRate = scoredItems > 0 ? passCount / scoredItems : null;
+
+    return {
+        averageScore,
+        passRate,
+        scoredCount: scoredItems,
+        totalCount: totalItems,
+    };
+}
+
+/**
+ * 获取得分徽章的颜色
+ */
+function getScoreBadgeVariant(passRate: number | null): "default" | "secondary" | "destructive" {
+    if (passRate === null) return "secondary";
+    if (passRate >= 0.8) return "default"; // 绿色 - 通过率 >= 80%
+    if (passRate >= 0.6) return "secondary"; // 灰色 - 通过率 >= 60%
+    return "destructive"; // 红色 - 通过率 < 60%
+}
+
 export function ContextTreeNode({
     context,
     selectedNode,
@@ -49,6 +116,9 @@ export function ContextTreeNode({
 
     const hasChildren = context.children && context.children.length > 0;
     const hasCases = (context.cases?.length || 0) > 0;
+
+    // 计算得分统计
+    const scoreStats = calculateContextScore(context);
 
     // Calculate indentation based on depth (increased from 20px to 24px)
     const indentPx = level * 24;
@@ -112,6 +182,18 @@ export function ContextTreeNode({
                     </span>
 
                     <div className="flex items-center gap-2 flex-shrink-0">
+                        {/* 得分徽章 */}
+                        {scoreStats.scoredCount > 0 && (
+                            <Badge
+                                variant={getScoreBadgeVariant(scoreStats.passRate)}
+                                className="text-xs font-normal"
+                            >
+                                {scoreStats.passRate !== null
+                                    ? `${(scoreStats.passRate * 100).toFixed(0)}%`
+                                    : "N/A"}
+                            </Badge>
+                        )}
+
                         {/* 只在折叠时显示 Cases count */}
                         {hasCases && !isExpanded && (
                             <Badge variant="outline" className="text-xs">
@@ -189,22 +271,25 @@ export function ContextTreeNode({
                                 >
                                     <span className="flex items-center gap-2 min-w-0 flex-1"> {/* 添加 min-w-0 和 flex-1 */}
                                         <FileText className="size-4 text-slate-400 flex-shrink-0" /> {/* 使用 FileText 替代 ChevronRight */}
+                                        {testCase.lastRunSummary?.score === 0 && (
+                                            <span className="size-2 bg-red-500 rounded-full flex-shrink-0" />
+                                        )}
                                         <span className="truncate">{testCase.title}</span> {/* 添加 truncate */}
                                     </span>
-                                    {status && (
+                                    {status === "succeeded" ? (
+                                        <span className="text-xs text-green-600 flex-shrink-0">✓</span>
+                                    ) : status ? (
                                         <Badge
                                             variant={
-                                                status === "succeeded"
-                                                    ? "default"
-                                                    : status === "failed"
-                                                      ? "destructive"
-                                                      : "secondary"
+                                                status === "failed"
+                                                    ? "destructive"
+                                                    : "secondary"
                                             }
                                             className="text-xs flex-shrink-0"
                                         >
                                             {statusEmojiMap[status] || status}
                                         </Badge>
-                                    )}
+                                    ) : null}
                                 </button>
                             </div>
                         );

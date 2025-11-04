@@ -284,15 +284,22 @@ export async function fetchEvaluationTree(): Promise<EvaluationTree> {
         orderIndex: row.orderIndex ?? undefined,
     }));
 
-    // 4. 获取所有执行结果
+    // 4. 获取所有执行结果（分批查询，避免D1参数限制）
     const caseIds = caseRows.map((row) => row.id);
-    const allResultRows = caseIds.length
-        ? await db
-            .select()
-            .from(evaluationResults)
-            .where(inArray(evaluationResults.caseId, caseIds))
-            .orderBy(desc(evaluationResults.startedAt), desc(evaluationResults.createdAt))
-        : [];
+    const allResultRows: EvaluationResultRow[] = [];
+
+    if (caseIds.length > 0) {
+        const BATCH_SIZE = 50; // D1参数限制，每批最多50个
+        for (let i = 0; i < caseIds.length; i += BATCH_SIZE) {
+            const batchIds = caseIds.slice(i, i + BATCH_SIZE);
+            const batchResults = await db
+                .select()
+                .from(evaluationResults)
+                .where(inArray(evaluationResults.caseId, batchIds))
+                .orderBy(desc(evaluationResults.startedAt), desc(evaluationResults.createdAt));
+            allResultRows.push(...batchResults);
+        }
+    }
 
     // 按 versionId 分组结果
     const resultsByVersion = new Map<string, Map<string, RunSummary>>();
@@ -825,10 +832,19 @@ export async function queueEvaluationRun(
         .filter((context) => selectedContextIds.has(context.id))
         .map((context) => context.id);
 
-    const cases = await db
-        .select()
-        .from(evaluationCases)
-        .where(inArray(evaluationCases.rootContextId, allContextIds));
+    // 分批查询cases（避免D1参数限制）
+    let cases: typeof evaluationCases.$inferSelect[] = [];
+    if (allContextIds.length > 0) {
+        const BATCH_SIZE = 50;
+        for (let i = 0; i < allContextIds.length; i += BATCH_SIZE) {
+            const batchIds = allContextIds.slice(i, i + BATCH_SIZE);
+            const batchCases = await db
+                .select()
+                .from(evaluationCases)
+                .where(inArray(evaluationCases.rootContextId, batchIds));
+            cases.push(...batchCases);
+        }
+    }
 
     let caseList = cases;
     if (payload.caseIds?.length) {
@@ -851,15 +867,20 @@ export async function queueEvaluationRun(
 
     const caseIdsToOverride = caseList.map((item) => item.id);
 
-    if (caseIdsToOverride.length) {
-        await db
-            .delete(evaluationResults)
-            .where(
-                and(
-                    eq(evaluationResults.versionId, payload.versionId),
-                    inArray(evaluationResults.caseId, caseIdsToOverride),
-                ),
-            );
+    // 分批删除旧结果（避免D1参数限制）
+    if (caseIdsToOverride.length > 0) {
+        const BATCH_SIZE = 50;
+        for (let i = 0; i < caseIdsToOverride.length; i += BATCH_SIZE) {
+            const batchIds = caseIdsToOverride.slice(i, i + BATCH_SIZE);
+            await db
+                .delete(evaluationResults)
+                .where(
+                    and(
+                        eq(evaluationResults.versionId, payload.versionId),
+                        inArray(evaluationResults.caseId, batchIds),
+                    ),
+                );
+        }
     }
 
     const resultValues = caseList.map((caseRow) => {
