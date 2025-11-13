@@ -11,6 +11,32 @@ export type EvaluationResult = {
 };
 
 /**
+ * 从 AI 响应中提取 JSON 对象
+ * 处理各种格式：纯 JSON、markdown 代码块、包含解释文本等
+ */
+function extractJSON(text: string): string {
+    let cleaned = text.trim();
+
+    // 1. 移除 markdown 代码块标记
+    if (cleaned.includes("```json")) {
+        cleaned = cleaned.replace(/```json\s*/g, "").replace(/```\s*/g, "");
+    } else if (cleaned.includes("```")) {
+        cleaned = cleaned.replace(/```\s*/g, "");
+    }
+    cleaned = cleaned.trim();
+
+    // 2. 尝试提取 JSON 对象 {...}
+    // 匹配从第一个 { 到最后一个 }
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+        return jsonMatch[0];
+    }
+
+    // 3. 如果没找到，返回原文本（让后续的 JSON.parse 报错）
+    return cleaned;
+}
+
+/**
  * 评估 response 是否满足 evaluation rule
  */
 export async function evaluateResponse(
@@ -35,7 +61,9 @@ export async function evaluateResponse(
         ? `Context Background:\n${contextSummary}\n\n`
         : "";
 
-    const prompt = `${contextBackground}You are an evaluation assistant. Your task is to evaluate whether an AI agent's response meets the specified evaluation criteria.
+    const prompt = `${contextBackground}You are an evaluation assistant.
+
+⚠️ CRITICAL: Your response must be ONLY a valid JSON object. Do not include any explanatory text before or after the JSON.
 
 Evaluation Rule:
 ${evalRule}
@@ -43,7 +71,7 @@ ${evalRule}
 AI Agent Response:
 ${responseContent}
 
-Please evaluate the response and provide your assessment in the following JSON format:
+Required JSON format:
 {
   "resultOverview": "First, summarize what the AI response did in 1-2 sentences.\\n\\nThen, explain whether it satisfies the evaluation rule and why (2-3 sentences).",
   "score": 1 or 0
@@ -57,7 +85,7 @@ Guidelines:
 - Be objective and specific in your reasoning
 - Consider both the content and quality of the response
 
-Return ONLY the JSON object, no additional text.`;
+Remember: Return ONLY the JSON object with no additional text.`;
 
     try {
         const response = await fetch(
@@ -112,21 +140,13 @@ Return ONLY the JSON object, no additional text.`;
 
         const content = data.choices[0].message.content.trim();
         console.log("[AI Evaluator] Raw AI response:");
-        console.log(content);
+        console.log(content.substring(0, 500)); // 打印前500字符，避免日志过长
 
-        // 解析 JSON（移除可能的 markdown 代码块标记）
-        let jsonStr = content;
-        if (jsonStr.includes("```json")) {
-            jsonStr = jsonStr.replace(/```json\s*/g, "").replace(/```\s*/g, "");
-        } else if (jsonStr.includes("```")) {
-            jsonStr = jsonStr.replace(/```\s*/g, "");
-        }
+        // 使用增强的 JSON 提取函数
+        const jsonStr = extractJSON(content);
 
-        // 清理可能的前后空白
-        jsonStr = jsonStr.trim();
-
-        console.log("[AI Evaluator] Cleaned JSON string:");
-        console.log(jsonStr);
+        console.log("[AI Evaluator] Extracted JSON string:");
+        console.log(jsonStr.substring(0, 500));
 
         let result: { resultOverview: string; score: number };
         try {

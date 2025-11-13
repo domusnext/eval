@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build:*)",
+      "Bash(npx tsx:*)",
+      "Bash(npm run db:generate:named:*)",
+      "Bash(npx wrangler d1 execute:*)",
+      "Bash(npm install react-markdown remark-gfm)",
+      "Bash(cat:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -261,6 +261,7 @@ export function ContextTreeNode({
                                             caseId: testCase.id,
                                         })
                                     }
+                                    data-case-id={testCase.id}
                                     className={cn(
                                         "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm transition-colors min-w-0", // 添加 min-w-0
                                         caseSelected
