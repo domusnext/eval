@@ -1,41 +1,48 @@
 {
-    "version": "7",
-    "dialect": "sqlite",
-    "entries": [
-        {
-            "idx": 0,
-            "version": "6",
-            "when": 1757850562913,
-            "tag": "0000_initial_schemas_migration",
-            "breakpoints": true
-        },
-        {
-            "idx": 1,
-            "version": "6",
-            "when": 1729755600000,
-            "tag": "0001_create_evaluations",
-            "breakpoints": true
-        },
-        {
-            "idx": 2,
-            "version": "6",
-            "when": 1730106000000,
-            "tag": "0002_context_tree_structure",
-            "breakpoints": true
-        },
-        {
-            "idx": 3,
-            "version": "6",
-            "when": 1730120000000,
-            "tag": "0004_eval_rule_and_result_fields",
-            "breakpoints": true
-        },
-        {
-            "idx": 4,
-            "version": "6",
-            "when": 1730130000000,
-            "tag": "0005_add_context_summary",
-            "breakpoints": true
-        }
-    ]
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1757850562913,
+      "tag": "0000_initial_schemas_migration",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1729755600000,
+      "tag": "0001_create_evaluations",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1730106000000,
+      "tag": "0002_context_tree_structure",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1730120000000,
+      "tag": "0004_eval_rule_and_result_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1730130000000,
+      "tag": "0005_add_context_summary",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1763112116763,
+      "tag": "0005_lethal_albert_cleary",
+      "breakpoints": true
+    }
+  ]
 }
