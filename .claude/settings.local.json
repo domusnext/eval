@@ -6,7 +6,8 @@
       "Bash(npm run db:generate:named:*)",
       "Bash(npx wrangler d1 execute:*)",
       "Bash(npm install react-markdown remark-gfm)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(sqlite3:*)"
     ],
     "deny": [],
     "ask": []

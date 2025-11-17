@@ -811,6 +811,23 @@ export async function saveEvaluationResult(input: {
     });
 }
 
+/**
+ * 递归收集 context 及其所有子孙 context 的 ID
+ */
+function collectContextIdsRecursively(
+    contextId: string,
+    allContexts: EvaluationContextRow[]
+): string[] {
+    const result = [contextId];
+    const children = allContexts.filter(ctx => ctx.parentContextId === contextId);
+
+    for (const child of children) {
+        result.push(...collectContextIdsRecursively(child.id, allContexts));
+    }
+
+    return result;
+}
+
 export async function queueEvaluationRun(
     payload: RunSelectionPayload,
 ): Promise<{ runId: string; caseCount: number }> {
@@ -824,13 +841,19 @@ export async function queueEvaluationRun(
         return { runId, caseCount: 0 };
     }
 
-    const selectedContextIds = payload.contextIds?.length
-        ? new Set(payload.contextIds)
-        : new Set(contexts.map((context) => context.id));
-
-    const allContextIds = contexts
-        .filter((context) => selectedContextIds.has(context.id))
-        .map((context) => context.id);
+    // 如果指定了 contextIds，递归收集所有子 context
+    let allContextIds: string[];
+    if (payload.contextIds?.length) {
+        const expandedIds = new Set<string>();
+        for (const contextId of payload.contextIds) {
+            const idsWithChildren = collectContextIdsRecursively(contextId, contexts);
+            idsWithChildren.forEach(id => expandedIds.add(id));
+        }
+        allContextIds = Array.from(expandedIds);
+    } else {
+        // 没有指定 contextIds，使用所有 contexts
+        allContextIds = contexts.map((context) => context.id);
+    }
 
     // 分批查询cases（避免D1参数限制）
     let cases: typeof evaluationCases.$inferSelect[] = [];
