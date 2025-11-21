@@ -5,10 +5,14 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
     /* config options here */
     async rewrites() {
+        // 支持通过环境变量配置 agent 地址
+        // 开发环境默认 localhost，生产环境可以配置为 ngrok 或其他地址
+        const agentUrl = process.env.AGENT_BASE_URL || "http://localhost:8082";
+        console.log("[Next.js] Agent proxy target:", agentUrl);
         return [
             {
                 source: "/api/agent/:path*",
-                destination: "http://localhost:8082/:path*",
+                destination: `${agentUrl}/:path*`,
             },
         ];
     },

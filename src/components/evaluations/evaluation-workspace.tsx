@@ -960,6 +960,35 @@ export function EvaluationWorkspace({
 
     const handleDeleteVersion = async (versionId: string) => {
         if (isMutating) return;
+
+        // 获取当前version以显示信息
+        const version = versionsState.find(v => v.id === versionId);
+        if (!version) return;
+
+        // 添加确认对话框
+        const contextCount = version.rootContexts.length;
+        const caseCount = version.rootContexts.reduce(
+            (acc, context) => acc + (context.cases?.length || 0),
+            0
+        );
+
+        let warningMessage = `Are you sure you want to delete the version "${version.label}"?`;
+
+        if (contextCount > 0 || caseCount > 0) {
+            warningMessage += `\n\nThis will also delete:`;
+            if (contextCount > 0) warningMessage += `\n- ${contextCount} context(s)`;
+            if (caseCount > 0) warningMessage += `\n- ${caseCount} case(s)`;
+            warningMessage += `\n- All associated evaluation results`;
+        }
+
+        warningMessage += `\n\nThis action cannot be undone.`;
+
+        const confirmed = window.confirm(warningMessage);
+
+        if (!confirmed) {
+            return;
+        }
+
         setIsMutating(true);
         try {
             await apiRequest(`/api/evaluations/versions/${versionId}`, {
@@ -1071,6 +1100,26 @@ export function EvaluationWorkspace({
 
     const handleDeleteContext = async (context: EvaluationContext) => {
         if (isMutating) return;
+
+        // 添加确认对话框
+        const caseCount = context.cases?.length || 0;
+        const childCount = context.children?.length || 0;
+        let warningMessage = `Are you sure you want to delete the context "${context.name}"?`;
+
+        if (caseCount > 0 || childCount > 0) {
+            warningMessage += `\n\nThis will also delete:`;
+            if (caseCount > 0) warningMessage += `\n- ${caseCount} case(s)`;
+            if (childCount > 0) warningMessage += `\n- ${childCount} child context(s) and their cases`;
+        }
+
+        warningMessage += `\n\nThis action cannot be undone.`;
+
+        const confirmed = window.confirm(warningMessage);
+
+        if (!confirmed) {
+            return;
+        }
+
         setIsMutating(true);
         try {
             await apiRequest(`/api/evaluations/contexts/${context.id}`, {
@@ -1168,6 +1217,16 @@ export function EvaluationWorkspace({
         testCase: EvaluationCase,
     ) => {
         if (isMutating) return;
+
+        // 添加确认对话框
+        const confirmed = window.confirm(
+            `Are you sure you want to delete the case "${testCase.title}"?\n\nThis action cannot be undone.`
+        );
+
+        if (!confirmed) {
+            return;
+        }
+
         setIsMutating(true);
         try {
             await apiRequest(`/api/evaluations/cases/${testCase.id}`, {
@@ -2803,6 +2862,37 @@ function ContextSummary({
                                                 aria-label={`Edit ${testCase.title}`}
                                             >
                                                 <Settings2 className="size-4" />
+                                            </Button>
+                                            <Button
+                                                size="icon"
+                                                variant="ghost"
+                                                disabled={isBusy}
+                                                onClick={async () => {
+                                                    const confirmed = window.confirm(
+                                                        `Are you sure you want to delete the case "${testCase.title}"?\n\nThis action cannot be undone.`
+                                                    );
+                                                    if (confirmed) {
+                                                        try {
+                                                            await fetch(`/api/evaluations/cases/${testCase.id}`, {
+                                                                method: "DELETE",
+                                                            });
+                                                            await onRefresh();
+                                                            // Show success toast
+                                                            const { toast } = await import("react-hot-toast");
+                                                            toast.success("Case deleted successfully");
+                                                        } catch (error) {
+                                                            const { toast } = await import("react-hot-toast");
+                                                            toast.error(
+                                                                error instanceof Error
+                                                                    ? error.message
+                                                                    : "Failed to delete case"
+                                                            );
+                                                        }
+                                                    }
+                                                }}
+                                                aria-label={`Delete ${testCase.title}`}
+                                            >
+                                                <Trash2 className="size-4" />
                                             </Button>
                                         </div>
                                     </div>

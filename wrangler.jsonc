@@ -29,7 +29,10 @@
             "binding": "eval_r2_bucket",
               "preview_bucket_name": "eval-uploads"
         }
-    ]
+    ],
+    "vars": {
+        "AGENT_BASE_URL": "https://field-auburn-dean-hundreds.trycloudflare.com"
+    }
     /**
      * Smart Placement
      * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
