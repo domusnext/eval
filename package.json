@@ -30,7 +30,10 @@
         "lint": "npx biome format --write --ignore-path .biomeignore"
     },
     "dependencies": {
+        "@aws-sdk/client-transcribe-streaming": "^3.936.0",
         "@cloudflare/next-on-pages": "^1.13.16",
+        "@google-cloud/language": "^7.2.1",
+        "@google-cloud/speech": "^7.2.1",
         "@hookform/resolvers": "^5.2.1",
         "@opennextjs/cloudflare": "^1.3.0",
         "@radix-ui/react-alert-dialog": "^1.1.15",
@@ -40,6 +43,7 @@
         "@radix-ui/react-select": "^2.2.6",
         "@radix-ui/react-separator": "^1.1.7",
         "@radix-ui/react-slot": "^1.2.3",
+        "@types/recordrtc": "^5.6.15",
         "better-auth": "^1.3.9",
         "better-sqlite3": "^12.2.0",
         "class-variance-authority": "^0.7.1",
@@ -49,11 +53,13 @@
         "drizzle-zod": "^0.8.3",
         "esbuild": "^0.25.11",
         "lucide-react": "^0.544.0",
+        "microsoft-cognitiveservices-speech-sdk": "^1.47.0",
         "next": "15.4.6",
         "react": "19.1.0",
         "react-dom": "19.1.0",
         "react-hook-form": "^7.62.0",
         "react-hot-toast": "^2.6.0",
+        "recordrtc": "^5.6.2",
         "tailwind-merge": "^3.3.1",
         "zod": "^4.1.8"
     },

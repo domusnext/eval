@@ -1,5 +1,6 @@
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 import type { NextConfig } from "next";
+import path from "path";
 
 /** @type {import("next").NextConfig} */
 const nextConfig: NextConfig = {
@@ -17,6 +18,13 @@ const nextConfig: NextConfig = {
         ];
     },
     webpack: (config, { isServer }) => {
+        if (isServer) {
+            config.resolve = config.resolve || {};
+            config.resolve.alias = {
+                ...(config.resolve.alias || {}),
+                recordrtc: path.resolve(__dirname, "src/lib/recorder/recordrtc.server-stub.ts"),
+            } as typeof config.resolve.alias;
+        }
         // 确保 Node.js 内置模块不会被打包到客户端
         if (!isServer) {
             config.resolve = config.resolve || {};
