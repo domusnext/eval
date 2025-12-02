@@ -9,6 +9,7 @@ import {
     type ASRServiceDescriptor,
 } from '@/lib/recorder/asr-service-config';
 import type { AwsTranscribeCredentials } from '@/lib/recorder/aws-transcribe-service';
+import RecordRTC from 'recordrtc';
 
 type SessionStatus = 'idle' | 'connecting' | 'recording' | 'stopping' | 'error';
 
