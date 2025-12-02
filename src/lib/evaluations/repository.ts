@@ -260,19 +260,29 @@ export async function fetchEvaluationTree(): Promise<EvaluationTree> {
     if (versionRows.length === 0) {
         return [];
     }
-
+    console.log('versionRows: ===', versionRows.length)
     // 2. 获取所有 contexts
     const allContexts = await db
         .select()
         .from(evaluationContexts)
         .orderBy(asc(evaluationContexts.depth), asc(evaluationContexts.createdAt));
+    
+    try {
+        console.log('allContexts: ===', allContexts.length, JSON.stringify(allContexts?.[0]))
+    } catch(e) {
+        console.error('caseRows error: ===', (e as any).message, allContexts.length)
+    }
 
     // 3. 获取所有 cases
     const caseRows = await db
         .select()
         .from(evaluationCases)
         .orderBy(asc(evaluationCases.orderIndex), asc(evaluationCases.createdAt));
-
+    try {
+        console.log('caseRows: ===', caseRows.length, JSON.stringify(caseRows?.[0]))
+    } catch(e) {
+        console.error('caseRows error: ===', (e as any).message, caseRows.length)
+    }
     const allCases: EvaluationCase[] = caseRows.map((row) => ({
         id: row.id,
         rootContextId: row.rootContextId,
@@ -301,6 +311,13 @@ export async function fetchEvaluationTree(): Promise<EvaluationTree> {
         }
     }
 
+    try {
+
+        console.log('allResultRows: ===', allResultRows.length, JSON.stringify(allResultRows?.[0]))
+    } catch(e) {
+        console.error('allResultRows error: ===', (e as any).message, allResultRows.length)
+    }
+
     // 按 versionId 分组结果
     const resultsByVersion = new Map<string, Map<string, RunSummary>>();
     for (const result of allResultRows) {
@@ -312,6 +329,13 @@ export async function fetchEvaluationTree(): Promise<EvaluationTree> {
         if (!versionResults.has(result.caseId)) {
             versionResults.set(result.caseId, buildRunSummary(result));
         }
+    }
+
+    try {
+
+        console.log('resultsByVersion: ===', resultsByVersion.size, JSON.stringify(resultsByVersion.keys()))
+    } catch(e) {
+        console.error('allResultRows error: ===', (e as any).message)
     }
 
     // 5. 构建树结构
@@ -343,6 +367,8 @@ export async function fetchEvaluationTree(): Promise<EvaluationTree> {
             } satisfies EvaluationVersion;
         })
     );
+
+    console.log("Memory used:", (performance as any).memory?.usedJSHeapSize, tree.length);
 
     return tree;
 }
