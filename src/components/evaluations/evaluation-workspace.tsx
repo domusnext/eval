@@ -63,6 +63,14 @@ type SelectedNode =
     | { type: "context"; contextId: string }
     | { type: "case"; contextId: string; caseId: string };
 
+type RunSource =
+    | "sidebar-selected"
+    | "header-selected"
+    | "context"
+    | "case"
+    | "version"
+    | null;
+
 type RunConfig = {
     concurrentRequests: number;
 };
@@ -109,6 +117,54 @@ const statusLabelMap: Record<StatusBadge, string> = {
 };
 
 const cloneData = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+
+const DEFAULT_EVAL_RULE = "Evaluate whether the AI agent's response is reasonable, complete, and accurate. Consider: 1) Does it address the user's request? 2) Is the information accurate? 3) Is the response well-structured and clear?";
+
+// Request notification permission if not already granted
+const requestNotificationPermission = async () => {
+    if (typeof window === "undefined" || !("Notification" in window)) {
+        return false;
+    }
+
+    if (Notification.permission === "granted") {
+        return true;
+    }
+
+    if (Notification.permission !== "denied") {
+        const permission = await Notification.requestPermission();
+        return permission === "granted";
+    }
+
+    return false;
+};
+
+// Show desktop notification
+const showNotification = (title: string, body: string, onClick?: () => void) => {
+    if (typeof window === "undefined" || !("Notification" in window)) {
+        return;
+    }
+
+    if (Notification.permission === "granted") {
+        const notification = new Notification(title, {
+            body,
+            icon: "/favicon.ico",
+            badge: "/favicon.ico",
+            requireInteraction: false,
+            silent: false,
+        });
+
+        if (onClick) {
+            notification.onclick = () => {
+                window.focus();
+                onClick();
+                notification.close();
+            };
+        }
+
+        // Auto close after 10 seconds
+        setTimeout(() => notification.close(), 10000);
+    }
+};
 
 const normalizeAgentBaseUrl = (baseUrl?: string | null): string => {
     if (!baseUrl || !baseUrl.trim()) {
@@ -347,6 +403,7 @@ export function EvaluationWorkspace({
     const [isVersionDialogOpen, setVersionDialogOpen] = useState(false);
     const [isContextDialogOpen, setContextDialogOpen] = useState(false);
     const [isRunning, setIsRunning] = useState(false);
+    const [runningSource, setRunningSource] = useState<RunSource>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
     const [caseDialogTarget, setCaseDialogTarget] = useState<{
         contextId: string;
@@ -506,6 +563,11 @@ export function EvaluationWorkspace({
     }, [apiRequest, sanitizeSelections]);
 
     const isBusy = isMutating || isRefreshing;
+
+    // Request notification permission on component mount
+    useEffect(() => {
+        void requestNotificationPermission();
+    }, []);
 
     useEffect(() => {
         if (typeof window === "undefined") return;
@@ -674,6 +736,111 @@ export function EvaluationWorkspace({
         }
     }, [activeVersion]);
 
+    // 键盘快捷键：上下方向键在同一context的cases之间切换
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // 只在选中case时响应
+            if (selectedNode.type !== "case") return;
+
+            // 只在没有焦点在输入框时响应
+            const activeElement = document.activeElement;
+            if (
+                activeElement instanceof HTMLInputElement ||
+                activeElement instanceof HTMLTextAreaElement ||
+                activeElement instanceof HTMLSelectElement
+            ) {
+                return;
+            }
+
+            // 上下方向键切换
+            if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                e.preventDefault();
+                e.stopPropagation();
+
+                // 找到当前case所在的context
+                const findContextWithCase = (
+                    contexts: EvaluationContext[]
+                ): EvaluationContext | null => {
+                    for (const ctx of contexts) {
+                        if (ctx.id === selectedNode.contextId) {
+                            return ctx;
+                        }
+                        if (ctx.children && ctx.children.length > 0) {
+                            const found = findContextWithCase(ctx.children);
+                            if (found) return found;
+                        }
+                    }
+                    return null;
+                };
+
+                const context = activeVersion
+                    ? findContextWithCase(activeVersion.rootContexts)
+                    : null;
+
+                if (!context || !context.cases || context.cases.length === 0) return;
+
+                const cases = context.cases;
+                const currentIndex = cases.findIndex((c) => c.id === selectedNode.caseId);
+
+                if (currentIndex === -1) return;
+
+                let newIndex: number;
+                if (e.key === "ArrowUp") {
+                    // 向上切换
+                    newIndex = currentIndex <= 0 ? cases.length - 1 : currentIndex - 1;
+                } else {
+                    // 向下切换
+                    newIndex = currentIndex >= cases.length - 1 ? 0 : currentIndex + 1;
+                }
+
+                const newCase = cases[newIndex];
+                if (newCase) {
+                    setSelectedNode({
+                        type: "case",
+                        contextId: context.id,
+                        caseId: newCase.id,
+                    });
+
+                    // 聚焦并精确滚动到新选中的case
+                    setTimeout(() => {
+                        const caseButton = document.querySelector(
+                            `[data-case-id="${newCase.id}"]`
+                        ) as HTMLElement;
+                        if (caseButton) {
+                            caseButton.focus({ preventScroll: true }); // 先聚焦但不滚动
+
+                            // 检查元素是否在可视区域内
+                            const rect = caseButton.getBoundingClientRect();
+                            const container = caseButton.closest('.overflow-y-auto');
+
+                            if (container) {
+                                const containerRect = container.getBoundingClientRect();
+
+                                // 如果元素在视口上方，滚动刚好让它显示
+                                if (rect.top < containerRect.top) {
+                                    container.scrollBy({
+                                        top: rect.top - containerRect.top - 8, // 8px padding
+                                        behavior: "smooth",
+                                    });
+                                }
+                                // 如果元素在视口下方，滚动刚好让它显示
+                                else if (rect.bottom > containerRect.bottom) {
+                                    container.scrollBy({
+                                        top: rect.bottom - containerRect.bottom + 8, // 8px padding
+                                        behavior: "smooth",
+                                    });
+                                }
+                            }
+                        }
+                    }, 0);
+                }
+            }
+        };
+
+        document.addEventListener("keydown", handleKeyDown);
+        return () => document.removeEventListener("keydown", handleKeyDown);
+    }, [selectedNode, activeVersion]);
+
     useEffect(() => {
         if (!selectedContext) {
             setContextDialogOpen(false);
@@ -793,6 +960,35 @@ export function EvaluationWorkspace({
 
     const handleDeleteVersion = async (versionId: string) => {
         if (isMutating) return;
+
+        // 获取当前version以显示信息
+        const version = versionsState.find(v => v.id === versionId);
+        if (!version) return;
+
+        // 添加确认对话框
+        const contextCount = version.rootContexts.length;
+        const caseCount = version.rootContexts.reduce(
+            (acc, context) => acc + (context.cases?.length || 0),
+            0
+        );
+
+        let warningMessage = `Are you sure you want to delete the version "${version.label}"?`;
+
+        if (contextCount > 0 || caseCount > 0) {
+            warningMessage += `\n\nThis will also delete:`;
+            if (contextCount > 0) warningMessage += `\n- ${contextCount} context(s)`;
+            if (caseCount > 0) warningMessage += `\n- ${caseCount} case(s)`;
+            warningMessage += `\n- All associated evaluation results`;
+        }
+
+        warningMessage += `\n\nThis action cannot be undone.`;
+
+        const confirmed = window.confirm(warningMessage);
+
+        if (!confirmed) {
+            return;
+        }
+
         setIsMutating(true);
         try {
             await apiRequest(`/api/evaluations/versions/${versionId}`, {
@@ -904,6 +1100,26 @@ export function EvaluationWorkspace({
 
     const handleDeleteContext = async (context: EvaluationContext) => {
         if (isMutating) return;
+
+        // 添加确认对话框
+        const caseCount = context.cases?.length || 0;
+        const childCount = context.children?.length || 0;
+        let warningMessage = `Are you sure you want to delete the context "${context.name}"?`;
+
+        if (caseCount > 0 || childCount > 0) {
+            warningMessage += `\n\nThis will also delete:`;
+            if (caseCount > 0) warningMessage += `\n- ${caseCount} case(s)`;
+            if (childCount > 0) warningMessage += `\n- ${childCount} child context(s) and their cases`;
+        }
+
+        warningMessage += `\n\nThis action cannot be undone.`;
+
+        const confirmed = window.confirm(warningMessage);
+
+        if (!confirmed) {
+            return;
+        }
+
         setIsMutating(true);
         try {
             await apiRequest(`/api/evaluations/contexts/${context.id}`, {
@@ -1001,6 +1217,16 @@ export function EvaluationWorkspace({
         testCase: EvaluationCase,
     ) => {
         if (isMutating) return;
+
+        // 添加确认对话框
+        const confirmed = window.confirm(
+            `Are you sure you want to delete the case "${testCase.title}"?\n\nThis action cannot be undone.`
+        );
+
+        if (!confirmed) {
+            return;
+        }
+
         setIsMutating(true);
         try {
             await apiRequest(`/api/evaluations/cases/${testCase.id}`, {
@@ -1044,11 +1270,19 @@ export function EvaluationWorkspace({
 
         const allContexts = getAllContexts(activeVersion.rootContexts);
 
-        const addContextCases = (context?: EvaluationContext) => {
+        const addContextCases = (
+            context?: EvaluationContext,
+            options: { includeChildren?: boolean } = {},
+        ) => {
             if (!context) return;
             context.cases?.forEach((testCase) => {
                 targetedCases.set(testCase.id, { context, testCase });
             });
+            if (options.includeChildren && context.children?.length) {
+                context.children.forEach((childContext) =>
+                    addContextCases(childContext, options),
+                );
+            }
         };
 
         const addSpecificCase = (contextId: string, caseId: string) => {
@@ -1072,7 +1306,9 @@ export function EvaluationWorkspace({
                 break;
             }
             case "context": {
-                addContextCases(findContextById(trigger.contextId));
+                addContextCases(findContextById(trigger.contextId), {
+                    includeChildren: true,
+                });
                 break;
             }
             case "case": {
@@ -1107,11 +1343,12 @@ export function EvaluationWorkspace({
         return Array.from(targetedCases.values());
     };
 
-    const runCases = async (trigger: RunTrigger, friendlyLabel: string) => {
+    const runCases = async (trigger: RunTrigger, friendlyLabel: string, source: RunSource) => {
         // If already running, abort the current run
         if (isRunning && abortControllerRef.current) {
             abortControllerRef.current.abort();
             setIsRunning(false);
+            setRunningSource(null);
             return;
         }
 
@@ -1133,6 +1370,7 @@ export function EvaluationWorkspace({
 
         setIsMutating(true);
         setIsRunning(true);
+        setRunningSource(source);
 
         let loadingToastId: string | undefined;
 
@@ -1292,8 +1530,8 @@ export function EvaluationWorkspace({
                     }
 
                     // 只有保存成功才执行评估
-                    if (savedSuccessfully && testCase.evalRule && testCase.evalRule.trim()) {
-                        console.log(`[Auto-evaluate] Evaluating case ${testCase.id} with evalRule...`);
+                    if (savedSuccessfully) {
+                        console.log(`[Auto-evaluate] Evaluating case ${testCase.id}...`);
                         try {
                             const evalResponse = await apiRequest(
                                 `/api/evaluations/cases/${testCase.id}/evaluate`,
@@ -1394,18 +1632,37 @@ export function EvaluationWorkspace({
                 loadingToastId = undefined;
             }
 
+            // Show desktop notification when all cases are completed
+            const totalCases = casesToRun.length;
+            let notificationTitle = "";
+            let notificationBody = "";
+
             if (successCount && !failureCount) {
+                notificationTitle = "✅ Evaluation Complete";
+                notificationBody = `All ${successCount} case(s) for ${friendlyLabel} completed successfully!`;
                 toast.success(
                     `Completed ${successCount} case(s) for ${friendlyLabel}.`,
                 );
             } else if (!successCount && failureCount) {
+                notificationTitle = "❌ Evaluation Failed";
+                notificationBody = `Failed to run ${failureCount} case(s) for ${friendlyLabel}.`;
                 toast.error(
                     `Failed to run ${failureCount} case(s) for ${friendlyLabel}.`,
                 );
             } else if (successCount && failureCount) {
+                notificationTitle = "⚠️ Evaluation Complete with Issues";
+                notificationBody = `${successCount} succeeded, ${failureCount} failed for ${friendlyLabel}.`;
                 toast(
                     `Completed ${successCount} case(s) with ${failureCount} failure(s) for ${friendlyLabel}.`,
                 );
+            }
+
+            // Show desktop notification
+            if (notificationTitle) {
+                showNotification(notificationTitle, notificationBody, () => {
+                    // Focus the window when notification is clicked
+                    window.focus();
+                });
             }
 
             if (errors.length) {
@@ -1435,6 +1692,7 @@ export function EvaluationWorkspace({
         } finally {
             setIsMutating(false);
             setIsRunning(false);
+            setRunningSource(null);
             abortControllerRef.current = null;
         }
     };
@@ -1522,7 +1780,7 @@ export function EvaluationWorkspace({
                         <Button
                             size="sm"
                             className="w-full justify-center"
-                            variant={isRunning ? "destructive" : "default"}
+                            variant={isRunning && runningSource === "sidebar-selected" ? "destructive" : "default"}
                             onClick={() => {
                                 if (!activeVersion) {
                                     toast.error("No version selected");
@@ -1537,15 +1795,16 @@ export function EvaluationWorkspace({
                                         caseIds: Array.from(checkedCaseIds),
                                     },
                                     "selected scopes",
+                                    "sidebar-selected",
                                 );
                             }}
                             disabled={
                                 !activeVersion ||
                                 (!selectedContextCount && !selectedCaseCount && !isRunning) ||
-                                (isBusy && !isRunning)
+                                (isBusy && runningSource !== "sidebar-selected")
                             }
                         >
-                            {isRunning ? (
+                            {isRunning && runningSource === "sidebar-selected" ? (
                                 <>
                                     <Square className="mr-2 size-4" />
                                     Stop
@@ -1618,12 +1877,12 @@ export function EvaluationWorkspace({
                                     <div className="inline-flex overflow-hidden rounded-md border bg-white shadow-sm">
                                         <Button
                                             size="sm"
-                                            variant={isRunning ? "destructive" : "default"}
+                                            variant={isRunning && runningSource === "header-selected" ? "destructive" : "default"}
                                             className="rounded-none rounded-l-md"
                                             disabled={
                                                 (!canRunSelection && !isRunning) ||
                                                 !activeVersion ||
-                                                (isBusy && !isRunning)
+                                                (isBusy && runningSource !== "header-selected")
                                             }
                                             onClick={() => {
                                                 if (
@@ -1647,10 +1906,11 @@ export function EvaluationWorkspace({
                                                             ),
                                                     },
                                                     "selected scopes",
+                                                    "header-selected",
                                                 );
                                             }}
                                         >
-                                            {isRunning ? (
+                                            {isRunning && runningSource === "header-selected" ? (
                                                 <>
                                                     <Square className="mr-2 size-4" />
                                                     Stop
@@ -1692,6 +1952,7 @@ export function EvaluationWorkspace({
                                                                 activeVersion.id,
                                                         },
                                                         `version ${activeVersion.label}`,
+                                                        "version",
                                                     );
                                                 }}
                                             >
@@ -1727,6 +1988,7 @@ export function EvaluationWorkspace({
                                                                 ),
                                                         },
                                                         "selected scopes",
+                                                        "header-selected",
                                                     );
                                                 }}
                                             >
@@ -1776,6 +2038,7 @@ export function EvaluationWorkspace({
                                             versionId: activeVersion.id,
                                         },
                                         `version ${activeVersion.label}`,
+                                        "version"
                                     )
                                 }
                             />
@@ -1786,6 +2049,7 @@ export function EvaluationWorkspace({
                                 context={selectedContext}
                                 isBusy={isBusy}
                                 isRunning={isRunning}
+                                runningSource={runningSource}
                                 onEdit={() => {
                                     if (!selectedContext) return;
                                     setContextDialogOpen(true);
@@ -1798,6 +2062,7 @@ export function EvaluationWorkspace({
                                             contextId: selectedContext.id,
                                         },
                                         `context ${selectedContext.name}`,
+                                        "context",
                                     )
                                 }
                                 onDelete={() =>
@@ -1815,6 +2080,7 @@ export function EvaluationWorkspace({
                                             caseId,
                                         },
                                         `case ${label}`,
+                                        "case",
                                     )
                                 }
                                 onEditCase={(caseId) =>
@@ -1839,6 +2105,7 @@ export function EvaluationWorkspace({
                                 testCase={selectedCase}
                                 isBusy={isBusy}
                                 isRunning={isRunning}
+                                runningSource={runningSource}
                                 onRun={() =>
                                     runCases(
                                         {
@@ -1848,6 +2115,7 @@ export function EvaluationWorkspace({
                                             caseId: selectedCase.id,
                                         },
                                         `case ${selectedCase.title}`,
+                                        "case",
                                     )
                                 }
                                 onDelete={() =>
@@ -1864,6 +2132,7 @@ export function EvaluationWorkspace({
                                 }
                                 onRefresh={refreshTree}
                                 versionId={activeVersion.id}
+                                onUpdateCase={handleUpdateCase}
                             />
                         ) : null}
                     </>
@@ -2289,6 +2558,7 @@ function ContextSummary({
     context,
     isBusy,
     isRunning,
+    runningSource,
     onEdit,
     onRun,
     onDelete,
@@ -2302,6 +2572,7 @@ function ContextSummary({
     context: EvaluationContext;
     isBusy: boolean;
     isRunning: boolean;
+    runningSource: RunSource;
     onEdit: () => void;
     onRun: () => Promise<void>;
     onDelete: () => Promise<void>;
@@ -2380,13 +2651,13 @@ function ContextSummary({
                 <div className="flex flex-wrap gap-2">
                     <Button
                         size="sm"
-                        variant={isRunning ? "destructive" : "default"}
-                        disabled={isBusy && !isRunning}
+                        variant={isRunning && runningSource === "context" ? "destructive" : "default"}
+                        disabled={isBusy && runningSource !== "context"}
                         onClick={() => {
                             void onRun();
                         }}
                     >
-                        {isRunning ? (
+                        {isRunning && runningSource === "context" ? (
                             <>
                                 <Square className="mr-2 size-4" />
                                 Stop
@@ -2441,7 +2712,7 @@ function ContextSummary({
                 </div>
             </CardHeader>
             <CardContent className="space-y-6">
-                <div className="grid gap-4 lg:grid-cols-2">
+                <div className="space-y-4">
                     <div className="space-y-2">
                         <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                             Environment JSON
@@ -2591,6 +2862,37 @@ function ContextSummary({
                                                 aria-label={`Edit ${testCase.title}`}
                                             >
                                                 <Settings2 className="size-4" />
+                                            </Button>
+                                            <Button
+                                                size="icon"
+                                                variant="ghost"
+                                                disabled={isBusy}
+                                                onClick={async () => {
+                                                    const confirmed = window.confirm(
+                                                        `Are you sure you want to delete the case "${testCase.title}"?\n\nThis action cannot be undone.`
+                                                    );
+                                                    if (confirmed) {
+                                                        try {
+                                                            await fetch(`/api/evaluations/cases/${testCase.id}`, {
+                                                                method: "DELETE",
+                                                            });
+                                                            await onRefresh();
+                                                            // Show success toast
+                                                            const { toast } = await import("react-hot-toast");
+                                                            toast.success("Case deleted successfully");
+                                                        } catch (error) {
+                                                            const { toast } = await import("react-hot-toast");
+                                                            toast.error(
+                                                                error instanceof Error
+                                                                    ? error.message
+                                                                    : "Failed to delete case"
+                                                            );
+                                                        }
+                                                    }
+                                                }}
+                                                aria-label={`Delete ${testCase.title}`}
+                                            >
+                                                <Trash2 className="size-4" />
                                             </Button>
                                         </div>
                                     </div>
@@ -2798,8 +3100,10 @@ function CaseSummary({
     onEdit,
     isBusy,
     isRunning,
+    runningSource,
     onRefresh,
     versionId,
+    onUpdateCase,
 }: {
     context: EvaluationContext;
     testCase: EvaluationCase;
@@ -2808,12 +3112,40 @@ function CaseSummary({
     onEdit: () => void;
     isBusy: boolean;
     isRunning: boolean;
+    runningSource: RunSource;
     onRefresh: () => Promise<void>;
     versionId: string;
+    onUpdateCase: (contextId: string, caseId: string, updates: Partial<EvaluationCase>) => Promise<void>;
 }) {
     const status = testCase.lastRunSummary?.status;
     const [isSaving, setIsSaving] = useState(false);
     const [isEvaluating, setIsEvaluating] = useState(false);
+    const [evalRule, setEvalRule] = useState(testCase.evalRule || DEFAULT_EVAL_RULE);
+    const [isSavingEvalRule, setIsSavingEvalRule] = useState(false);
+
+    // Sync evalRule with testCase.evalRule when it changes
+    useEffect(() => {
+        setEvalRule(testCase.evalRule || DEFAULT_EVAL_RULE);
+    }, [testCase.evalRule]);
+
+    const handleSaveEvalRule = async () => {
+        setIsSavingEvalRule(true);
+        try {
+            await onUpdateCase(context.id, testCase.id, {
+                evalRule: evalRule.trim() || DEFAULT_EVAL_RULE,
+            });
+            toast.success("Evaluation rule saved successfully!");
+        } catch (error) {
+            console.error("Failed to save evaluation rule:", error);
+            toast.error(
+                error instanceof Error
+                    ? error.message
+                    : "Failed to save evaluation rule"
+            );
+        } finally {
+            setIsSavingEvalRule(false);
+        }
+    };
 
     const handleEvaluate = async () => {
         setIsEvaluating(true);
@@ -2915,13 +3247,13 @@ function CaseSummary({
                     <div className="flex flex-wrap gap-2">
                         <Button
                             size="sm"
-                            variant={isRunning ? "destructive" : "default"}
-                            disabled={isBusy && !isRunning}
+                            variant={isRunning && runningSource === "case" ? "destructive" : "default"}
+                            disabled={isBusy && runningSource !== "case"}
                             onClick={() => {
                                 void onRun();
                             }}
                         >
-                            {isRunning ? (
+                            {isRunning && runningSource === "case" ? (
                                 <>
                                     <Square className="mr-2 size-4" />
                                     Stop
@@ -3039,7 +3371,6 @@ function CaseSummary({
                         size="sm"
                         variant="outline"
                         disabled={
-                            !testCase.evalRule ||
                             !testCase.lastRunSummary?.responseContent ||
                             isEvaluating ||
                             isBusy
@@ -3075,14 +3406,33 @@ function CaseSummary({
 
                             {/* Evaluation Rule */}
                             <div className="space-y-2 md:col-span-3">
-                                <span className="text-sm font-semibold text-slate-700">
-                                    Evaluation Rule
-                                </span>
-                                <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-900 whitespace-pre-wrap">
-                                    {testCase.evalRule || (
-                                        <span className="text-slate-400 italic">No evaluation rule defined</span>
-                                    )}
+                                <div className="flex items-center justify-between">
+                                    <span className="text-sm font-semibold text-slate-700">
+                                        Evaluation Rule
+                                    </span>
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={isSavingEvalRule || isBusy}
+                                        onClick={() => {
+                                            void handleSaveEvalRule();
+                                        }}
+                                        className="h-7 px-2 text-xs"
+                                    >
+                                        <Save className="mr-1 size-3" />
+                                        {isSavingEvalRule ? "Saving..." : "Save"}
+                                    </Button>
                                 </div>
+                                <Textarea
+                                    value={evalRule}
+                                    onChange={(e) => setEvalRule(e.target.value)}
+                                    rows={4}
+                                    className="text-sm"
+                                    placeholder="Enter evaluation criteria..."
+                                />
+                                <p className="text-xs text-slate-500">
+                                    Default rule is provided if empty. You can customize it for specific requirements.
+                                </p>
                             </div>
                         </div>
 
@@ -3159,7 +3509,7 @@ function CaseEditDialog({
         const content = testCase.userMessage.content;
         return typeof content === "string" ? content : "";
     });
-    const [evalRule, setEvalRule] = useState(testCase.evalRule ?? "");
+    const [evalRule, setEvalRule] = useState(testCase.evalRule || DEFAULT_EVAL_RULE);
 
     useEffect(() => {
         if (!open) return;
@@ -3167,7 +3517,7 @@ function CaseEditDialog({
         setDescription(testCase.description ?? "");
         const content = testCase.userMessage.content;
         setUserMessageText(typeof content === "string" ? content : "");
-        setEvalRule(testCase.evalRule ?? "");
+        setEvalRule(testCase.evalRule || DEFAULT_EVAL_RULE);
     }, [open, testCase]);
 
     const handleSave = async () => {
@@ -3191,7 +3541,7 @@ function CaseEditDialog({
             title: finalTitle || title, // 如果 finalTitle 为空，使用原 title
             description,
             userMessage,
-            evalRule: evalRule || undefined,
+            evalRule: evalRule.trim() || DEFAULT_EVAL_RULE,
         });
         onOpenChange(false);
     };
@@ -3248,7 +3598,7 @@ function CaseEditDialog({
                     <Separator />
                     <div className="space-y-2">
                         <Label htmlFor="edit-case-eval-rule">
-                            Evaluation Rule (Optional)
+                            Evaluation Rule
                         </Label>
                         <Textarea
                             id="edit-case-eval-rule"
@@ -3259,6 +3609,9 @@ function CaseEditDialog({
                                 setEvalRule(event.target.value)
                             }
                         />
+                        <p className="text-xs text-slate-500">
+                            Default rule is provided if empty. You can customize it for specific requirements.
+                        </p>
                     </div>
                 </div>
                 <DialogFooter>
@@ -3592,6 +3945,61 @@ function parseSSEResponse(responseText: string): SSEEvent[] {
     return events;
 }
 
+// Merge text-delta events between text-start and text-end
+function mergeTextDeltas(events: SSEEvent[]): SSEEvent[] {
+    const merged: SSEEvent[] = [];
+    let i = 0;
+
+    while (i < events.length) {
+        const event = events[i];
+
+        // Check if this is a text-start event
+        if (event.type === "text-start") {
+            const startEvent = event;
+            const textDeltas: string[] = [];
+            let j = i + 1;
+
+            // Collect all text-delta events until text-end
+            while (j < events.length) {
+                const nextEvent = events[j];
+
+                if (nextEvent.type === "text-end" && nextEvent.id === startEvent.id) {
+                    // Found the matching text-end, create merged event
+                    if (textDeltas.length > 0) {
+                        merged.push({
+                            type: "text",
+                            id: startEvent.id,
+                            text: textDeltas.join(""),
+                            agentName: startEvent.agentName,
+                            timestamp: startEvent.timestamp,
+                        });
+                    }
+                    // Skip to after text-end
+                    i = j + 1;
+                    break;
+                }
+
+                if (nextEvent.type === "text-delta" && nextEvent.id === startEvent.id && nextEvent.text) {
+                    textDeltas.push(nextEvent.text);
+                }
+
+                j++;
+            }
+
+            // If we didn't find text-end, just skip the start event
+            if (j >= events.length) {
+                i++;
+            }
+        } else {
+            // Not a text-start, add as-is
+            merged.push(event);
+            i++;
+        }
+    }
+
+    return merged;
+}
+
 // Extract agent name from SSE events
 function extractAgentName(events: SSEEvent[]): string | null {
     for (const event of events) {
@@ -3634,6 +4042,7 @@ function isCollapsibleEvent(event: SSEEvent): boolean {
         type.includes("start") ||
         type.includes("finish") ||
         type.includes("end") ||
+        type === "text-delta" ||
         type === "tool-input-delta"
     );
 }
@@ -3642,6 +4051,7 @@ function getEventBorderColor(type: string): string {
     if (type.includes("start")) return "border-blue-500";
     if (type.includes("finish") || type.includes("end"))
         return "border-purple-500";
+    if (type === "text") return "border-orange-500";
     if (type === "text-delta") return "border-orange-500";
     if (type === "tool-call") return "border-cyan-500";
     if (type === "tool-result") return "border-green-500";
@@ -3685,9 +4095,10 @@ function SSEResponseViewer({ responseContent }: { responseContent: string }) {
         new Set(),
     );
 
-    const events = useMemo(() => parseSSEResponse(responseContent), [
+    const rawEvents = useMemo(() => parseSSEResponse(responseContent), [
         responseContent,
     ]);
+    const events = useMemo(() => mergeTextDeltas(rawEvents), [rawEvents]);
     const agentName = useMemo(() => extractAgentName(events), [events]);
     const hasFailure = useMemo(() => hasResponseFailure(events), [events]);
 

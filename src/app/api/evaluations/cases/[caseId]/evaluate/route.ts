@@ -45,13 +45,9 @@ export async function POST(
             );
         }
 
-        // 2. 验证 evalRule 存在
-        if (!caseRow.evalRule) {
-            return NextResponse.json(
-                { error: "No evaluation rule defined for this case" },
-                { status: 400 }
-            );
-        }
+        // 2. 如果没有 evalRule，使用默认评估规则
+        const defaultEvalRule = "Evaluate whether the AI agent's response is reasonable, complete, and accurate. Consider: 1) Does it address the user's request? 2) Is the information accurate? 3) Is the response well-structured and clear?";
+        const evalRule = caseRow.evalRule || defaultEvalRule;
 
         // 3. 获取对应的 context（用于 contextSummary）
         const [context] = await db
@@ -130,7 +126,7 @@ export async function POST(
         let evaluation: { resultOverview: string; score: 0 | 1 };
         try {
             evaluation = await evaluateResponse(
-                caseRow.evalRule,
+                evalRule,
                 responseContent,  // 使用解压后的内容
                 context.contextSummary ?? undefined
             );

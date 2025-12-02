@@ -94,7 +94,7 @@ export function getContextPath(
 
 /**
  * 验证是否可以创建子节点
- * 检查深度和子节点数量限制
+ * 检查深度限制（子节点数量限制已移除）
  */
 export function canCreateChild(
     parentContext: { depth: number; childCount: number },
@@ -112,13 +112,13 @@ export function canCreateChild(
         };
     }
 
-    // 检查子节点数量限制
-    if (parentContext.childCount >= maxChildren) {
-        return {
-            canCreate: false,
-            reason: `Maximum children count of ${maxChildren} reached`,
-        };
-    }
+    // 子节点数量限制已移除
+    // if (parentContext.childCount >= maxChildren) {
+    //     return {
+    //         canCreate: false,
+    //         reason: `Maximum children count of ${maxChildren} reached`,
+    //     };
+    // }
 
     return { canCreate: true };
 }

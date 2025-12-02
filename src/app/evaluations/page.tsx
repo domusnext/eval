@@ -1,5 +1,6 @@
 'use client';
 import { EvaluationVersion } from "@/lib/evaluations/models";
+'use client';
 import { EvaluationWorkspace } from "@/components/evaluations/evaluation-workspace";
 import { fetchEvaluationTree } from "@/lib/evaluations/repository";
 import { useEffect, useState } from "react";
