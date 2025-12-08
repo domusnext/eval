@@ -175,6 +175,40 @@
           "name": "Family Calendar",
           "description": null
         }
+      },
+      "shopping": {
+        "shopping_lists": [
+          {
+            "shopping_list_id": "53bdb6ac-41f7-41c0-b4c9-302202af1969",
+            "name": "Default",
+            "is_default": true
+          },
+          {
+            "shopping_list_id": "73888623-8dfd-40d7-bacf-2be587c45f9e",
+            "name": "Costco",
+            "is_default": false
+          },
+          {
+            "shopping_list_id": "179ceb33-2492-42e6-bb97-8b50a012189e",
+            "name": "Party Supplies",
+            "is_default": false
+          },
+          {
+            "shopping_list_id": "5ce5e413-3258-439d-976a-926a783a56a5",
+            "name": "Italian",
+            "is_default": false
+          },
+          {
+            "shopping_list_id": "5f141401-bce6-4ff6-9e3c-790a0b02a523",
+            "name": "BBQ",
+            "is_default": false
+          },
+          {
+            "shopping_list_id": "9eccf857-7cc3-4950-bcac-e8bc0cf860bf",
+            "name": "Groceries",
+            "is_default": false
+          }
+        ]
       }
     },
     "chat_info": {

@@ -11,6 +11,7 @@ import {
     Download,
     Play,
     Plus,
+    RefreshCw,
     Save,
     Settings2,
     Sparkles,
@@ -1098,6 +1099,36 @@ export function EvaluationWorkspace({
         }
     };
 
+    const handleSyncContextDefaults = async () => {
+        if (isMutating) return;
+        setIsMutating(true);
+        try {
+            const response = await apiRequest<{
+                data: { updatedCount: number };
+            }>("/api/evaluations/contexts/sync-defaults", {
+                method: "POST",
+                body: JSON.stringify({ updateAll: true }),
+            });
+
+            await refreshTree();
+
+            const updatedCount = response?.data?.updatedCount ?? 0;
+            const label =
+                updatedCount === 1
+                    ? "Synced defaults to 1 context"
+                    : `Synced defaults to ${updatedCount} contexts`;
+            toast.success(label);
+        } catch (error) {
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : "Failed to sync default configuration";
+            toast.error(message);
+        } finally {
+            setIsMutating(false);
+        }
+    };
+
     const handleDeleteContext = async (context: EvaluationContext) => {
         if (isMutating) return;
 
@@ -2011,6 +2042,15 @@ export function EvaluationWorkspace({
                                         </div>
                                     ) : null}
                                 </div>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={isBusy}
+                                    onClick={handleSyncContextDefaults}
+                                >
+                                    <RefreshCw className="mr-2 size-4" />
+                                    Sync defaults
+                                </Button>
                                 <Button
                                     size="sm"
                                     variant="outline"

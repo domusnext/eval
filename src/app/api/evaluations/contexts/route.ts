@@ -1,34 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createEvaluationContext } from "@/lib/evaluations/repository";
-import { readFile } from "fs/promises";
-import { join } from "path";
-import type { Environment } from "@/lib/evaluations/models";
-
-// 读取默认配置
-async function loadDefaultEnvironment(): Promise<{
-    environment: Environment;
-    headers: Record<string, string>;
-}> {
-    try {
-        const configPath = join(process.cwd(), "default_environment.json");
-        const content = await readFile(configPath, "utf-8");
-        const config = JSON.parse(content) as {
-            environment: Environment;
-            headers: Record<string, string>;
-        };
-        return config;
-    } catch (error) {
-        console.warn("Failed to load default_environment.json, using empty defaults:", error);
-        return {
-            environment: {
-                family_info: {},
-                user_brief: {},
-                chat_info: {},
-            },
-            headers: {},
-        };
-    }
-}
+import { loadDefaultEnvironment } from "@/lib/evaluations/config-loader";
 
 export async function POST(request: NextRequest) {
     try {
