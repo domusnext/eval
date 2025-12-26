@@ -1,6 +1,6 @@
 const API_BASE = 'http://localhost:3001';
 const VERSION_ID = '43ae6e7c-3311-4a3a-9f88-72d15d5adbbf';
-const AI_GATEWAY_API_KEY = 'vck_0MrIi2DLGhlJE8QoWAjy6jJavscxZDRPtcgJggdNV6SslAY4a94b6Ikz';
+const AI_GATEWAY_API_KEY = 'vck_4BcdV1v4wy3VgmyPQ4b7RLFeSBrVBhoT06qpuoUdNW5Hz25IAr2Q8vKq';
 
 // 已经处理过的context（从上一次运行的日志中提取）
 const PROCESSED_CONTEXTS = [
