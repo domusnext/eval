@@ -95,7 +95,7 @@ Current Date: ${dateString}
 
 Guidelines:
 - score: 1 if the response satisfies the evaluation rule, 0 if it does not
-- Language: Your resultOverview should use the same language as the evaluation rule; AI Agent Response should use the same language as the User Message
+- resultOverview Language: Your resultOverview should use the same language as the evaluation rule
 - Be objective and specific in your reasoning
 - Consider both the content and quality of the response
 - When evaluating, consider the user's original message to understand the context and intent
