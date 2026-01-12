@@ -61,7 +61,9 @@ export async function evaluateResponse(
         ? `Context Background:\n${contextSummary}\n\n`
         : "";
 
-    const prompt = `${contextBackground}You are an evaluation assistant.
+    const prompt = `
+Previous turn context summary: ${contextBackground}
+You are an evaluation assistant.
 
 ⚠️ CRITICAL: Your response must be ONLY a valid JSON object. Do not include any explanatory text before or after the JSON.
 
@@ -97,7 +99,7 @@ Remember: Return ONLY the JSON object with no additional text.`;
                     Authorization: `Bearer ${AI_GATEWAY_API_KEY}`,
                 },
                 body: JSON.stringify({
-                    model: "google/gemini-2.5-flash",
+                    model: "google/gemini-3-flash",
                     messages: [
                         {
                             role: "user",

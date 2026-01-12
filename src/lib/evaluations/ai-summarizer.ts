@@ -89,7 +89,7 @@ Summary:`;
                     Authorization: `Bearer ${AI_GATEWAY_API_KEY}`,
                 },
                 body: JSON.stringify({
-                    model: 'google/gemini-2.5-flash',
+                    model: 'google/gemini-3-flash',
                     messages: [
                         {
                             role: "user",

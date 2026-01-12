@@ -70329,7 +70329,7 @@ ${b2}
 
 Summary:`;
           try {
-            let a3 = await fetch("https://ai-gateway.vercel.sh/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${d.L}` }, body: JSON.stringify({ model: "google/gemini-2.5-flash", messages: [{ role: "user", content: c2 }], stream: false }) });
+            let a3 = await fetch("https://ai-gateway.vercel.sh/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${d.L}` }, body: JSON.stringify({ model: "google/gemini-3-flash", messages: [{ role: "user", content: c2 }], stream: false }) });
             if (!a3.ok) {
               let b4 = await a3.text();
               throw console.error("[AI Summarizer] AI Gateway error:", a3.status, b4), Error(`AI Gateway returned ${a3.status}: ${b4}`);
@@ -124601,7 +124601,7 @@ Guidelines:
 
 Remember: Return ONLY the JSON object with no additional text.`;
             try {
-              let a4, b4 = await fetch("https://ai-gateway.vercel.sh/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${v.L}` }, body: JSON.stringify({ model: "google/gemini-2.5-flash", messages: [{ role: "user", content: k2 }], stream: false }) });
+              let a4, b4 = await fetch("https://ai-gateway.vercel.sh/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${v.L}` }, body: JSON.stringify({ model: "google/gemini-3-flash", messages: [{ role: "user", content: k2 }], stream: false }) });
               if (!b4.ok) {
                 let a5 = await b4.text();
                 throw console.error("[AI Evaluator] AI Gateway error:", b4.status, a5), Error(`AI Gateway returned ${b4.status}: ${a5}`);
