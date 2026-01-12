@@ -49,6 +49,17 @@ export async function POST(
         const defaultEvalRule = "Evaluate whether the AI agent's response is reasonable, complete, and accurate. Consider: 1) Does it address the user's request? 2) Is the information accurate? 3) Is the response well-structured and clear?";
         const evalRule = caseRow.evalRule || defaultEvalRule;
 
+        // 2.5. 解析 userMessage
+        let userMessage: string | undefined;
+        try {
+            if (caseRow.userMessageJson) {
+                const parsed = JSON.parse(caseRow.userMessageJson);
+                userMessage = typeof parsed === 'string' ? parsed : JSON.stringify(parsed);
+            }
+        } catch (error) {
+            console.warn("[Evaluate API] Failed to parse userMessageJson:", error);
+        }
+
         // 3. 获取对应的 context（用于 contextSummary）
         const [context] = await db
             .select()
@@ -128,7 +139,8 @@ export async function POST(
             evaluation = await evaluateResponse(
                 evalRule,
                 responseContent,  // 使用解压后的内容
-                context.contextSummary ?? undefined
+                context.contextSummary ?? undefined,
+                userMessage  // 传递用户消息
             );
         } catch (evalError) {
             console.error("[Evaluate API] AI evaluation failed:", evalError);

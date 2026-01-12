@@ -42,11 +42,15 @@ function extractJSON(text: string): string {
 export async function evaluateResponse(
     evalRule: string,
     responseContent: string,
-    contextSummary?: string
+    contextSummary?: string,
+    userMessage?: string
 ): Promise<EvaluationResult> {
     console.log("[AI Evaluator] Starting evaluation...");
     console.log(`[AI Evaluator] Eval Rule: ${evalRule.substring(0, 100)}...`);
     console.log(`[AI Evaluator] Response length: ${responseContent.length} chars`);
+    if (userMessage) {
+        console.log(`[AI Evaluator] User Message: ${userMessage.substring(0, 100)}...`);
+    }
 
     // 获取当前日期和星期几
     const now = new Date();
@@ -61,8 +65,16 @@ export async function evaluateResponse(
         ? `Context Background:\n${contextSummary}\n\n`
         : "";
 
+    const userMessageContext = userMessage
+        ? `User Message:\n${userMessage}\n\n`
+        : "";
+
     const prompt = `
+# Context
 Previous turn context summary: ${contextBackground}
+User Message for this turn: ${userMessageContext}
+
+# Evaluation Rules
 You are an evaluation assistant.
 
 ⚠️ CRITICAL: Your response must be ONLY a valid JSON object. Do not include any explanatory text before or after the JSON.
@@ -83,9 +95,10 @@ Current Date: ${dateString}
 
 Guidelines:
 - score: 1 if the response satisfies the evaluation rule, 0 if it does not
-- resultOverview: Use the same language as the evaluation rule and response
+- Language: Your resultOverview should use the same language as the evaluation rule; AI Agent Response should use the same language as the User Message
 - Be objective and specific in your reasoning
 - Consider both the content and quality of the response
+- When evaluating, consider the user's original message to understand the context and intent
 
 Remember: Return ONLY the JSON object with no additional text.`;
 
