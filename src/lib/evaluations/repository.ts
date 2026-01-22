@@ -104,34 +104,16 @@ function parseAssistantMessage(
 }
 
 function buildRunSummary(row: EvaluationResultRow): RunSummary {
-    // 解压 responseJson（向后兼容未压缩的数据）
-    let responseContent: string | undefined;
-
-    if (row.responseJson) {
-        try {
-            if (isCompressed(row.responseJson)) {
-                // 压缩数据，需要解压
-                responseContent = decompressText(row.responseJson);
-                console.log(`[BuildRunSummary] Decompressed response: ${row.responseJson.length}B → ${responseContent.length}B`);
-            } else {
-                // 未压缩的旧数据，直接使用
-                responseContent = row.responseJson;
-                console.log("[BuildRunSummary] Using uncompressed response (legacy data)");
-            }
-        } catch (error) {
-            console.error("[BuildRunSummary] Failed to decompress response:", error);
-            // 解压失败，回退到 undefined 而不是使用可能损坏的数据
-            responseContent = undefined;
-        }
-    } else {
-        responseContent = undefined;
-    }
+    // 注意：不返回 responseContent 到 API 响应中
+    // responseContent 太大且可能包含特殊字符导致 JSON 序列化错误
+    // 前端可以通过单独的 API 获取完整的 response 内容
 
     return {
         status: row.status,
         durationMs: row.latencyMs ?? undefined,
         completedAt: row.completedAt ? toIso(row.completedAt) : undefined,
-        responseContent,
+        // responseContent 不包含在这里 - 改为 undefined 避免 JSON 序列化错误
+        responseContent: undefined,
         resultOverview: row.resultOverview ?? undefined,
         score: row.score ?? undefined,
     };
