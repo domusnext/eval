@@ -83,6 +83,15 @@ export function convertResponseToMessages(
     const events = parseSSEResponse(responseContent);
     const messages: ConvertedMessage[] = [];
 
+    // 调试日志：统计事件类型
+    const eventTypeStats = new Map<string, number>();
+    events.forEach(event => {
+        const type = event.type || "unknown";
+        eventTypeStats.set(type, (eventTypeStats.get(type) || 0) + 1);
+    });
+    console.log("[ResponseConverter] Event type statistics:", Object.fromEntries(eventTypeStats));
+    console.log(`[ResponseConverter] Total events: ${events.length}`);
+
     // 1. 添加 user message
     // 始终转换为数组格式（Agent 要求 content 必须是数组）
     const userContent: MessageContent[] = [];
@@ -156,7 +165,17 @@ export function convertResponseToMessages(
                 currentRole = "assistant";
             }
 
+            // 调试日志：检查字段完整性
+            console.log("[ResponseConverter] tool-call event:", {
+                hasToolName: !!event.toolName,
+                hasToolCallId: !!event.toolCallId,
+                hasInput: !!event.input,
+                toolName: event.toolName,
+                toolCallId: event.toolCallId,
+            });
+
             if (event.toolName && event.toolCallId && event.input) {
+                console.log(`[ResponseConverter] ✅ Adding tool-call: ${event.toolName}`);
                 assistantContent.push({
                     type: "tool_call",
                     tool_call: {
@@ -164,6 +183,12 @@ export function convertResponseToMessages(
                         name: event.toolName,
                         arguments: event.input as Record<string, unknown>,
                     },
+                });
+            } else {
+                console.warn("[ResponseConverter] ⚠️ Skipped tool-call due to missing fields:", {
+                    toolName: event.toolName,
+                    toolCallId: event.toolCallId,
+                    hasInput: !!event.input,
                 });
             }
         } else if (type === "tool-result") {
@@ -179,7 +204,18 @@ export function convertResponseToMessages(
 
             currentRole = "tool";
 
+            // 调试日志：检查字段完整性
+            console.log("[ResponseConverter] tool-result event:", {
+                hasToolName: !!event.toolName,
+                hasToolCallId: !!event.toolCallId,
+                hasOutput: !!event.output,
+                toolName: event.toolName,
+                toolCallId: event.toolCallId,
+            });
+
             if (event.toolName && event.toolCallId) {
+                console.log(`[ResponseConverter] ✅ Adding tool-result: ${event.toolName}`);
+
                 // 将 content 序列化为字符串（符合 Anthropic Claude API 标准）
                 const rawContent = event.output?.modelVisibleData?.data ?? null;
                 const contentString = typeof rawContent === 'string'
@@ -201,7 +237,20 @@ export function convertResponseToMessages(
                     role: "tool",
                     content: [toolResultContent],
                 });
+            } else {
+                console.warn("[ResponseConverter] ⚠️ Skipped tool-result due to missing fields:", {
+                    toolName: event.toolName,
+                    toolCallId: event.toolCallId,
+                });
             }
+        } else if (type) {
+            // 记录所有未处理的事件类型
+            console.log(`[ResponseConverter] 🔍 Unhandled event type: "${type}"`, {
+                hasText: !!event.text,
+                hasToolName: !!event.toolName,
+                hasToolCallId: !!event.toolCallId,
+                keys: Object.keys(event),
+            });
         }
     }
 
@@ -212,6 +261,16 @@ export function convertResponseToMessages(
             content: assistantContent,
         });
     }
+
+    // 调试日志：最终消息统计
+    console.log("[ResponseConverter] Conversion complete:", {
+        totalMessages: messages.length,
+        messageRoles: messages.map(m => m.role),
+        assistantToolCalls: messages
+            .filter(m => m.role === "assistant")
+            .reduce((count, m) => count + m.content.filter(c => c.type === "tool_call").length, 0),
+        toolResults: messages.filter(m => m.role === "tool").length,
+    });
 
     return messages;
 }

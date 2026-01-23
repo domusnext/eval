@@ -1508,6 +1508,62 @@ export function EvaluationWorkspace({
                     // Final flush of decoder
                     responseContent += decoder.decode();
 
+                    // ========== 前端诊断：分析 SSE 响应 ==========
+                    console.log(`[Case Execution Debug] Analyzing responseContent for case: ${testCase.title}`);
+                    const lines = responseContent.split("\n");
+                    const eventTypes = new Map<string, number>();
+                    let toolCallEvents = 0;
+                    let toolResultEvents = 0;
+                    const toolEventDetails: any[] = [];
+
+                    for (const line of lines) {
+                        if (line.startsWith("data: ")) {
+                            try {
+                                const event = JSON.parse(line.substring(6)) as any;
+                                const type = event.type || "unknown";
+                                eventTypes.set(type, (eventTypes.get(type) || 0) + 1);
+
+                                // 收集 tool 相关事件的详细信息
+                                if (type.toLowerCase().includes("tool")) {
+                                    const detail = {
+                                        type,
+                                        toolName: event.toolName,
+                                        toolCallId: event.toolCallId,
+                                        hasInput: !!event.input,
+                                        hasOutput: !!event.output,
+                                    };
+
+                                    if (type.includes("call") || type.includes("use")) {
+                                        toolCallEvents++;
+                                        console.log(`[Case Execution Debug] 🔧 Tool Call Event:`, detail);
+                                    } else if (type.includes("result")) {
+                                        toolResultEvents++;
+                                        console.log(`[Case Execution Debug] ✅ Tool Result Event:`, detail);
+                                    }
+
+                                    toolEventDetails.push(detail);
+                                }
+                            } catch {
+                                // Skip invalid JSON
+                            }
+                        }
+                    }
+
+                    console.log("[Case Execution Debug] SSE Response Summary:", {
+                        totalLines: lines.length,
+                        uniqueEventTypes: Array.from(eventTypes.keys()),
+                        eventTypeCounts: Object.fromEntries(eventTypes),
+                        toolCallEvents,
+                        toolResultEvents,
+                    });
+
+                    if (toolCallEvents === 0 && toolResultEvents > 0) {
+                        console.warn("⚠️ [Case Execution Debug] ISSUE DETECTED: No tool-call events but tool-result events exist!");
+                        console.warn("This explains why tool calls are missing from the display.");
+                        console.warn("Check the event type names in the SSE response.");
+                    }
+                    // ========== 诊断结束 ==========
+
                     const durationMs = Math.round(performance.now() - startedAt);
                     const completedAt = new Date().toISOString();
 
@@ -3231,6 +3287,51 @@ function CaseSummary({
             return;
         }
 
+        // 前端诊断：分析 responseContent
+        console.log("[Frontend Debug] Analyzing responseContent before saving...");
+        const responseContent = testCase.lastRunSummary.responseContent;
+
+        // 解析 SSE 事件
+        const lines = responseContent.split("\n");
+        const eventTypes = new Map<string, number>();
+        let toolCallCount = 0;
+        let toolResultCount = 0;
+
+        for (const line of lines) {
+            if (line.startsWith("data: ")) {
+                try {
+                    const event = JSON.parse(line.substring(6)) as any;
+                    const type = event.type || "unknown";
+                    eventTypes.set(type, (eventTypes.get(type) || 0) + 1);
+
+                    // 检查 tool 相关事件
+                    if (type.toLowerCase().includes("tool")) {
+                        if (type.includes("call") || type.includes("use")) {
+                            toolCallCount++;
+                            console.log(`[Frontend Debug] Found tool-call event:`, {
+                                type,
+                                hasToolName: !!event.toolName,
+                                hasToolCallId: !!event.toolCallId,
+                                hasInput: !!event.input,
+                                toolName: event.toolName,
+                            });
+                        } else if (type.includes("result")) {
+                            toolResultCount++;
+                        }
+                    }
+                } catch {
+                    // Skip invalid JSON
+                }
+            }
+        }
+
+        console.log("[Frontend Debug] SSE Analysis:", {
+            totalLines: lines.length,
+            eventTypes: Object.fromEntries(eventTypes),
+            toolCallEvents: toolCallCount,
+            toolResultEvents: toolResultCount,
+        });
+
         setIsSaving(true);
         try {
             const response = await fetch(
@@ -4020,7 +4121,13 @@ function mergeTextDeltas(events: SSEEvent[]): SSEEvent[] {
                 }
 
                 if (nextEvent.type === "text-delta" && nextEvent.id === startEvent.id && nextEvent.text) {
+                    // This is a text-delta for this text block, accumulate it
                     textDeltas.push(nextEvent.text);
+                } else if (nextEvent.type !== "text-delta" || nextEvent.id !== startEvent.id) {
+                    // This is NOT a text-delta for this text block (different id or different type)
+                    // It's a different event (like tool-call, tool-result, etc.)
+                    // We need to preserve it!
+                    merged.push(nextEvent);
                 }
 
                 j++;
@@ -4138,7 +4245,40 @@ function SSEResponseViewer({ responseContent }: { responseContent: string }) {
     const rawEvents = useMemo(() => parseSSEResponse(responseContent), [
         responseContent,
     ]);
-    const events = useMemo(() => mergeTextDeltas(rawEvents), [rawEvents]);
+    const events = useMemo(() => {
+        const merged = mergeTextDeltas(rawEvents);
+
+        // 调试：统计事件类型
+        const eventTypes = new Map<string, number>();
+        rawEvents.forEach(e => {
+            const type = e.type || "unknown";
+            eventTypes.set(type, (eventTypes.get(type) || 0) + 1);
+        });
+
+        const mergedEventTypes = new Map<string, number>();
+        merged.forEach(e => {
+            const type = e.type || "unknown";
+            mergedEventTypes.set(type, (mergedEventTypes.get(type) || 0) + 1);
+        });
+
+        console.log("[SSEResponseViewer] Event processing:", {
+            rawEventsCount: rawEvents.length,
+            mergedEventsCount: merged.length,
+            rawEventTypes: Object.fromEntries(eventTypes),
+            mergedEventTypes: Object.fromEntries(mergedEventTypes),
+        });
+
+        // 检查 tool-call 是否被过滤掉
+        const toolCallInRaw = rawEvents.filter(e => e.type === "tool-call").length;
+        const toolCallInMerged = merged.filter(e => e.type === "tool-call").length;
+
+        if (toolCallInRaw > 0 && toolCallInMerged === 0) {
+            console.warn("⚠️ [SSEResponseViewer] tool-call events were filtered out during merge!");
+            console.warn("Raw tool-call events:", rawEvents.filter(e => e.type === "tool-call"));
+        }
+
+        return merged;
+    }, [rawEvents]);
     const agentName = useMemo(() => extractAgentName(events), [events]);
     const hasFailure = useMemo(() => hasResponseFailure(events), [events]);
 
@@ -4191,6 +4331,18 @@ function SSEResponseViewer({ responseContent }: { responseContent: string }) {
                     const isExpanded = expandedEvents.has(index);
                     const borderColor = getEventBorderColor(type);
                     const label = getEventLabel(event);
+
+                    // 调试：记录渲染决策
+                    if (type === "tool-call") {
+                        console.log(`[SSEResponseViewer] Rendering tool-call event #${index}:`, {
+                            type,
+                            isCollapsible,
+                            isHidden,
+                            showHidden,
+                            willRender: !isHidden,
+                            event,
+                        });
+                    }
 
                     if (isHidden) return null;
 

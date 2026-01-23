@@ -11,7 +11,9 @@
       "Bash(npm run deploy:cf:*)",
       "Bash(npx wrangler deploy)",
       "Bash(git add:*)",
-      "Bash(git commit -m \"$\\(cat <<''EOF''\nfeat: add database diagnostics and improved error handling\n\n- Add /api/debug/db-check endpoint for diagnosing D1 connection issues\n- Improve /api/evaluations/tree with detailed logging and error messages\n- Add error state UI to evaluations page with retry functionality\n- Create comprehensive troubleshooting guide for Cloudflare deployment\n\nThis helps diagnose and fix the issue where evaluation data wasn''t displaying\non Cloudflare deployment despite data existing in D1.\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfeat: add database diagnostics and improved error handling\n\n- Add /api/debug/db-check endpoint for diagnosing D1 connection issues\n- Improve /api/evaluations/tree with detailed logging and error messages\n- Add error state UI to evaluations page with retry functionality\n- Create comprehensive troubleshooting guide for Cloudflare deployment\n\nThis helps diagnose and fix the issue where evaluation data wasn''t displaying\non Cloudflare deployment despite data existing in D1.\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfix: resolve JSON serialization error for large responseContent\n\nProblem: API returned unterminated JSON at position 115MB because \nresponseContent contained unescaped special characters.\n\nSolution:\n- Remove responseContent from tree API response \\(too large to serialize\\)\n- Add /api/debug/tree-simple for lightweight data loading\n- Keep responseContent in database for later retrieval via separate API\n\nThe responseContent can be fetched separately if needed via a dedicated\nresult API endpoint.\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(cd:*)"
     ],
     "deny": [],
     "ask": []
