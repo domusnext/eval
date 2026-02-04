@@ -1,6 +1,6 @@
 /**
  * AI 总结工具
- * 使用 Vercel AI Gateway 调用 Gemini 来总结 context messages
+ * 使用 OpenRouter 调用 Gemini 来总结 context messages
  */
 
 import type { Message } from "./models";
@@ -79,21 +79,23 @@ ${formattedMessages}
 Summary:`;
 
     try {
-        const apiKey = process.env.AI_GATEWAY_API_KEY;
+        const apiKey = process.env.OPENROUTER_API_KEY;
         if (!apiKey) {
-            throw new Error("AI_GATEWAY_API_KEY environment variable is not set");
+            throw new Error("OPENROUTER_API_KEY environment variable is not set");
         }
 
         const response = await fetch(
-            "https://ai-gateway.vercel.sh/v1/chat/completions",
+            "https://openrouter.ai/api/v1/chat/completions",
             {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
                     Authorization: `Bearer ${apiKey}`,
+                    "HTTP-Referer": "https://eval.app", // OpenRouter 需要
+                    "X-Title": "Eval App", // OpenRouter 需要
                 },
                 body: JSON.stringify({
-                    model: 'google/gemini-3-flash',
+                    model: 'google/gemini-flash-1.5',
                     messages: [
                         {
                             role: "user",
@@ -107,9 +109,9 @@ Summary:`;
 
         if (!response.ok) {
             const errorText = await response.text();
-            console.error("[AI Summarizer] AI Gateway error:", response.status, errorText);
+            console.error("[AI Summarizer] OpenRouter error:", response.status, errorText);
             throw new Error(
-                `AI Gateway returned ${response.status}: ${errorText}`
+                `OpenRouter returned ${response.status}: ${errorText}`
             );
         }
 

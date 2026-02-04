@@ -1,6 +1,6 @@
 const API_BASE = 'http://localhost:3001';
 const VERSION_ID = '43ae6e7c-3311-4a3a-9f88-72d15d5adbbf';
-const AI_GATEWAY_API_KEY = process.env.AI_GATEWAY_API_KEY;
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 // 已经处理过的context（从上一次运行的日志中提取）
 const PROCESSED_CONTEXTS = [
@@ -84,8 +84,8 @@ async function getSubContexts() {
 }
 
 async function generateCRUDCases(userQuery, aiResponse) {
-    if (!AI_GATEWAY_API_KEY) {
-        throw new Error('AI_GATEWAY_API_KEY environment variable is not set');
+    if (!OPENROUTER_API_KEY) {
+        throw new Error('OPENROUTER_API_KEY environment variable is not set');
     }
 
     const prompt = `Given this conversation:
@@ -121,15 +121,17 @@ Return ONLY a JSON object with this format:
 
     try {
         const response = await fetch(
-            "https://ai-gateway.vercel.sh/v1/chat/completions",
+            "https://openrouter.ai/api/v1/chat/completions",
             {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
-                    Authorization: `Bearer ${AI_GATEWAY_API_KEY}`,
+                    Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+                    "HTTP-Referer": "https://eval.app",
+                    "X-Title": "Eval App",
                 },
                 body: JSON.stringify({
-                    model: "google/gemini-3-flash",
+                    model: "google/gemini-flash-1.5",
                     messages: [
                         {
                             role: "user",
@@ -143,7 +145,7 @@ Return ONLY a JSON object with this format:
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`AI Gateway error: ${response.status} ${errorText}`);
+            throw new Error(`OpenRouter error: ${response.status} ${errorText}`);
         }
 
         const data = await response.json();
