@@ -3,8 +3,6 @@
  * 使用 Vercel AI Gateway 调用 Gemini 来评估 case response
  */
 
-import { AI_GATEWAY_API_KEY } from "@/../../apikey";
-
 export type EvaluationResult = {
     resultOverview: string;
     score: 0 | 1;
@@ -103,13 +101,18 @@ Guidelines:
 Remember: Return ONLY the JSON object with no additional text.`;
 
     try {
+        const apiKey = process.env.AI_GATEWAY_API_KEY;
+        if (!apiKey) {
+            throw new Error("AI_GATEWAY_API_KEY environment variable is not set");
+        }
+
         const response = await fetch(
             "https://ai-gateway.vercel.sh/v1/chat/completions",
             {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
-                    Authorization: `Bearer ${AI_GATEWAY_API_KEY}`,
+                    Authorization: `Bearer ${apiKey}`,
                 },
                 body: JSON.stringify({
                     model: "google/gemini-3-flash",

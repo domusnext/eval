@@ -1,6 +1,6 @@
 const API_BASE = 'http://localhost:3001';
 const VERSION_ID = '43ae6e7c-3311-4a3a-9f88-72d15d5adbbf';
-const AI_GATEWAY_API_KEY = 'vck_0MrIi2DLGhlJE8QoWAjy6jJavscxZDRPtcgJggdNV6SslAY4a94b6Ikz';
+const AI_GATEWAY_API_KEY = process.env.AI_GATEWAY_API_KEY;
 
 // 已经处理过的context（从上一次运行的日志中提取）
 const PROCESSED_CONTEXTS = [
@@ -84,6 +84,10 @@ async function getSubContexts() {
 }
 
 async function generateCRUDCases(userQuery, aiResponse) {
+    if (!AI_GATEWAY_API_KEY) {
+        throw new Error('AI_GATEWAY_API_KEY environment variable is not set');
+    }
+
     const prompt = `Given this conversation:
 
 User Query: ${userQuery}

@@ -28,6 +28,10 @@ yarn-error.log*
 # local env files
 .env*.local
 
+# API keys (never commit)
+apikey.ts
+apikey.js
+
 # vercel
 .vercel
 

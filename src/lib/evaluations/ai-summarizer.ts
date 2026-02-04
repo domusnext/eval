@@ -3,7 +3,6 @@
  * 使用 Vercel AI Gateway 调用 Gemini 来总结 context messages
  */
 
-import { AI_GATEWAY_API_KEY } from "@/../../apikey";
 import type { Message } from "./models";
 
 /**
@@ -80,13 +79,18 @@ ${formattedMessages}
 Summary:`;
 
     try {
+        const apiKey = process.env.AI_GATEWAY_API_KEY;
+        if (!apiKey) {
+            throw new Error("AI_GATEWAY_API_KEY environment variable is not set");
+        }
+
         const response = await fetch(
             "https://ai-gateway.vercel.sh/v1/chat/completions",
             {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
-                    Authorization: `Bearer ${AI_GATEWAY_API_KEY}`,
+                    Authorization: `Bearer ${apiKey}`,
                 },
                 body: JSON.stringify({
                     model: 'google/gemini-3-flash',
