@@ -95,7 +95,7 @@ Summary:`;
                     "X-Title": "Eval App", // OpenRouter 需要
                 },
                 body: JSON.stringify({
-                    model: 'google/gemini-flash-1.5',
+                    model: 'google/gemini-3-flash-preview',
                     messages: [
                         {
                             role: "user",

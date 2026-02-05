@@ -131,7 +131,7 @@ Return ONLY a JSON object with this format:
                     "X-Title": "Eval App",
                 },
                 body: JSON.stringify({
-                    model: "google/gemini-flash-1.5",
+                    model: "google/gemini-3-flash-preview",
                     messages: [
                         {
                             role: "user",
