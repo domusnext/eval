@@ -794,6 +794,63 @@ export async function saveEvaluationResult(input: {
 }
 
 /**
+ * 获取评估结果（包含完整的 responseContent）
+ * 用于按需加载大型响应数据
+ */
+export async function getEvaluationResult(input: {
+    versionId: string;
+    caseId: string;
+}): Promise<{
+    responseContent: string;
+    status: EvaluationResultStatus;
+    resultOverview?: string;
+    score?: number;
+    latencyMs?: number;
+    completedAt?: string;
+} | null> {
+    const db = await getDb();
+
+    // 查询该 version 下该 case 的最新结果
+    const results = await db
+        .select()
+        .from(evaluationResults)
+        .where(
+            and(
+                eq(evaluationResults.versionId, input.versionId),
+                eq(evaluationResults.caseId, input.caseId),
+            ),
+        )
+        .orderBy(desc(evaluationResults.startedAt), desc(evaluationResults.createdAt))
+        .limit(1);
+
+    if (results.length === 0) {
+        return null;
+    }
+
+    const result = results[0];
+
+    // 解压 responseContent
+    let responseContent = result.responseJson || "";
+    if (responseContent && isCompressed(responseContent)) {
+        try {
+            responseContent = decompressText(responseContent);
+        } catch (error) {
+            console.error("[GetResult] Failed to decompress responseContent:", error);
+            // 如果解压失败，返回原始数据
+        }
+    }
+
+    return {
+        responseContent,
+        status: result.status,
+        resultOverview: result.resultOverview ?? undefined,
+        score: result.score ?? undefined,
+        latencyMs: result.latencyMs ?? undefined,
+        completedAt: result.completedAt ? toIso(result.completedAt) : undefined,
+    };
+}
+
+/**
  * 递归收集 context 及其所有子孙 context 的 ID
  */
 function collectContextIdsRecursively(

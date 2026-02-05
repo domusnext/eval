@@ -3219,10 +3219,54 @@ function CaseSummary({
     const [evalRule, setEvalRule] = useState(testCase.evalRule || DEFAULT_EVAL_RULE);
     const [isSavingEvalRule, setIsSavingEvalRule] = useState(false);
 
+    // 按需加载 responseContent
+    const [loadedResponseContent, setLoadedResponseContent] = useState<string | null>(null);
+    const [isLoadingResponse, setIsLoadingResponse] = useState(false);
+    const [responseLoadError, setResponseLoadError] = useState<string | null>(null);
+
     // Sync evalRule with testCase.evalRule when it changes
     useEffect(() => {
         setEvalRule(testCase.evalRule || DEFAULT_EVAL_RULE);
     }, [testCase.evalRule]);
+
+    // 加载 responseContent 的函数
+    const loadResponseContent = async () => {
+        setIsLoadingResponse(true);
+        setResponseLoadError(null);
+        try {
+            const response = await fetch(
+                `/api/evaluations/results?versionId=${versionId}&caseId=${testCase.id}`
+            );
+
+            if (!response.ok) {
+                const errorData = (await response.json().catch(() => ({}))) as {
+                    error?: string;
+                };
+                throw new Error(errorData.error || "Failed to load response");
+            }
+
+            const data = (await response.json()) as { responseContent: string };
+            setLoadedResponseContent(data.responseContent);
+        } catch (error) {
+            console.error("Failed to load response content:", error);
+            setResponseLoadError(
+                error instanceof Error ? error.message : "Failed to load response"
+            );
+        } finally {
+            setIsLoadingResponse(false);
+        }
+    };
+
+    // 当切换到新的 case 时，自动加载 responseContent
+    useEffect(() => {
+        setLoadedResponseContent(null);
+        setResponseLoadError(null);
+
+        // 如果当前 case 有执行结果但没有 responseContent，自动加载
+        if (testCase.lastRunSummary && !testCase.lastRunSummary.responseContent) {
+            void loadResponseContent();
+        }
+    }, [testCase.id, versionId]);
 
     const handleSaveEvalRule = async () => {
         setIsSavingEvalRule(true);
@@ -3282,14 +3326,16 @@ function CaseSummary({
     };
 
     const handleSaveToContext = async () => {
-        if (!testCase.lastRunSummary?.responseContent) {
+        const responseContent = testCase.lastRunSummary?.responseContent || loadedResponseContent;
+
+        if (!responseContent) {
             toast.error("No response content to save");
             return;
         }
 
         // 前端诊断：分析 responseContent
         console.log("[Frontend Debug] Analyzing responseContent before saving...");
-        const responseContent = testCase.lastRunSummary.responseContent;
+
 
         // 解析 SSE 事件
         const lines = responseContent.split("\n");
@@ -3341,7 +3387,7 @@ function CaseSummary({
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         userMessage: testCase.userMessage,
-                        responseContent: testCase.lastRunSummary.responseContent,
+                        responseContent: responseContent,
                         caseTitle: testCase.title,
                     }),
                 }
@@ -3593,35 +3639,71 @@ function CaseSummary({
                     </div>
                 </CardContent>
             </Card>
-            {testCase.lastRunSummary?.responseContent ? (
+            {testCase.lastRunSummary ? (
                 <Card>
                     <CardHeader>
                         <div className="flex items-start justify-between">
                             <div className="space-y-1">
                                 <CardTitle>Response content</CardTitle>
                                 <CardDescription>
-                                    Stream response from the agent (session storage only, not persisted).
+                                    Stream response from the agent.
                                 </CardDescription>
                             </div>
-                            <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={isSaving || isBusy}
-                                onClick={() => {
-                                    void handleSaveToContext();
-                                }}
-                            >
-                                <Save className="mr-2 size-4" />
-                                {isSaving ? "Saving..." : "Save to Context"}
-                            </Button>
+                            {(testCase.lastRunSummary.responseContent || loadedResponseContent) && (
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={isSaving || isBusy}
+                                    onClick={() => {
+                                        void handleSaveToContext();
+                                    }}
+                                >
+                                    <Save className="mr-2 size-4" />
+                                    {isSaving ? "Saving..." : "Save to Context"}
+                                </Button>
+                            )}
                         </div>
                     </CardHeader>
                     <CardContent>
-                        <SSEResponseViewer
-                            responseContent={
-                                testCase.lastRunSummary.responseContent
-                            }
-                        />
+                        {testCase.lastRunSummary.responseContent || loadedResponseContent ? (
+                            <SSEResponseViewer
+                                responseContent={
+                                    testCase.lastRunSummary.responseContent || loadedResponseContent!
+                                }
+                            />
+                        ) : isLoadingResponse ? (
+                            <div className="flex items-center justify-center py-8 text-slate-500">
+                                <div className="flex items-center gap-2">
+                                    <div className="size-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
+                                    <span>Loading response content...</span>
+                                </div>
+                            </div>
+                        ) : responseLoadError ? (
+                            <div className="flex flex-col items-center justify-center py-8 text-slate-500">
+                                <p className="mb-3 text-sm text-red-600">{responseLoadError}</p>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                        void loadResponseContent();
+                                    }}
+                                >
+                                    Retry
+                                </Button>
+                            </div>
+                        ) : (
+                            <div className="flex items-center justify-center py-8">
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                        void loadResponseContent();
+                                    }}
+                                >
+                                    Load Response Content
+                                </Button>
+                            </div>
+                        )}
                     </CardContent>
                 </Card>
             ) : null}
