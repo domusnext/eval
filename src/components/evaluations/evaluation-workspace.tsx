@@ -3558,7 +3558,8 @@ function CaseSummary({
                         size="sm"
                         variant="outline"
                         disabled={
-                            !testCase.lastRunSummary?.responseContent ||
+                            !testCase.lastRunSummary ||
+                            testCase.lastRunSummary.status !== "succeeded" ||
                             isEvaluating ||
                             isBusy
                         }
