@@ -20,12 +20,22 @@ export async function POST(request: NextRequest) {
                 { status: 400 },
             );
         }
-
+        console.log("Proxying request to:", targetUrl, "with headers:", JSON.stringify(headers, null, 2), "and body:", JSON.stringify(body, null, 2));
         const upstream = await fetch(targetUrl, {
             method: "POST",
-            headers,
+            headers: {
+                ...headers,
+                "User-Agent": request.headers.get("user-agent") || "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": request.headers.get("accept") || "application/json, text/plain, */*",
+                "Accept-Language": request.headers.get("accept-language") || "en-US,en;q=0.9",
+                "Accept-Encoding": request.headers.get("accept-encoding") || "gzip, deflate, br",
+                "Origin": request.headers.get("origin") || "https://smart-domi.app",
+                "Referer": request.headers.get("referer") || "https://smart-domi.app/"
+            },
             body: JSON.stringify(body),
         });
+
+        console.log("Received response from upstream with status:", upstream.status, "and headers:", JSON.stringify(Object.fromEntries(upstream.headers.entries()), null, 2));
 
         const contentType = upstream.headers.get("content-type") ?? "";
         if (!upstream.ok) {
