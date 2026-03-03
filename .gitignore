@@ -63,7 +63,6 @@ next-env.d.ts
 backups/
 
 # Auto-generated Cloudflare type definitions
-cloudflare-env.d.ts
 worker-configuration.d.ts
 
 # Log files
