@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRequestContext } from "@cloudflare/next-on-pages";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 export async function POST(request: NextRequest) {
     const formData = await request.formData();
@@ -20,8 +20,8 @@ export async function POST(request: NextRequest) {
         );
     }
 
-    const ctx = getRequestContext();
-    const bucket = ctx.env.eval_r2_bucket;
+    const { env } = await getCloudflareContext();
+    const bucket = env.eval_r2_bucket;
     const arrayBuffer = await file.arrayBuffer();
 
     const extension = file.name.split(".").pop() ?? "";
@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
         },
     });
 
-    const baseUrl = ctx.env.CLOUDFLARE_R2_URL?.replace(/\/+$/, "") ?? "";
+    const baseUrl = env.CLOUDFLARE_R2_URL?.replace(/\/+$/, "") ?? "";
     const url = baseUrl ? `${baseUrl}/${key}` : `/${key}`;
 
     return NextResponse.json({
