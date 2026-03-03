@@ -667,31 +667,23 @@ wrangler d1 insights next-cf-app
 
 ## 🚀 Deployment
 
-### Automatic Deployment (Recommended)
-
-Push to `main` branch triggers automatic deployment via GitHub Actions:
+### Manual Deployment (Production)
 
 ```bash
-git add .
-git commit -m "feat: add new feature"
-git push origin main
+# 1. Generate Cloudflare types
+pnpm run cf-typegen
+
+# 2. Apply database migrations (if any)
+npx wrangler d1 migrations apply eval-evaluations --remote
+
+# 3. Build for Cloudflare Workers
+pnpm run build:cf
+
+# 4. Deploy
+pnpm run deploy:cf
 ```
 
-**Deployment Pipeline:**
-1. ✅ Install dependencies
-2. ✅ Build application
-3. ✅ Run database migrations
-4. ✅ Deploy to Cloudflare Workers
-
-### Manual Deployment
-
-```bash
-# Deploy to production
-pnpm run deploy
-
-# Deploy to preview environment
-pnpm run deploy:preview
-```
+> **Note**: GitHub Actions CI/CD is configured in `.github/workflows/deploy.yml` but currently not functional for this fork due to type generation and environment differences between local and CI. Use manual deployment instead.
 
 ## ✍️ Todos
 

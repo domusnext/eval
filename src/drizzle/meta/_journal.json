@@ -43,6 +43,13 @@
       "when": 1763112116763,
       "tag": "0005_lethal_albert_cleary",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1763112120000,
+      "tag": "0006_add_version_mode",
+      "breakpoints": true
     }
   ]
 }
