@@ -45,6 +45,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
+      - name: Generate Cloudflare types
+        run: npx wrangler types --env-interface CloudflareEnv ./cloudflare-env.d.ts
+
       - name: Build application
         run: pnpm run preview:cf
         env:
@@ -127,6 +130,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
+
+      - name: Generate Cloudflare types
+        run: npx wrangler types --env-interface CloudflareEnv ./cloudflare-env.d.ts
 
       - name: Build application
         run: pnpm run build:cf
