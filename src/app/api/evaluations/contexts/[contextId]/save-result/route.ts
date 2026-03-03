@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createChildContextFromCaseResult } from "@/lib/evaluations/repository";
-import { convertResponseToMessages } from "@/lib/evaluations/response-converter";
+import { convertResponseToMessages, convertVoiceAgentResponseToMessages } from "@/lib/evaluations/response-converter";
 import type { UserModelMessage } from "@/lib/evaluations/types";
 
 /**
@@ -18,9 +18,10 @@ export async function POST(
             userMessage: UserModelMessage;
             responseContent: string;
             caseTitle?: string;
+            mode?: string;
         };
 
-        const { userMessage, responseContent, caseTitle } = body;
+        const { userMessage, responseContent, caseTitle, mode } = body;
 
         // 验证必需参数
         if (!userMessage || !responseContent) {
@@ -30,11 +31,10 @@ export async function POST(
             );
         }
 
-        // 1. 转换 responseContent 为消息格式
-        const newMessages = convertResponseToMessages(
-            userMessage,
-            responseContent
-        );
+        // 1. 按 mode 选择转换器
+        const newMessages = mode === "voice-agent"
+            ? convertVoiceAgentResponseToMessages(userMessage, responseContent)
+            : convertResponseToMessages(userMessage, responseContent);
 
         // 2. 创建子 Context
         const newContextId = await createChildContextFromCaseResult(

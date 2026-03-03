@@ -55,6 +55,7 @@ import type {
     EvaluationContext,
     EvaluationVersion,
     RunSummary,
+    VersionMode,
 } from "@/lib/evaluations/models";
 import { cn } from "@/lib/utils";
 import { MessageBuilder } from "@/components/evaluations/message-builder";
@@ -349,6 +350,87 @@ const buildAgentRequestBody = (
     };
 
     return payload;
+};
+
+const buildVoiceAgentRequestBody = (
+    resolvedMessages: EvaluationContext["resolvedMessages"],
+    userMessage: EvaluationCase["userMessage"],
+): Record<string, unknown> => {
+    // 将 resolvedMessages + userMessage 转为 OpenAI 兼容格式
+    // { messages: [{role, content?, tool_calls?, tool_call_id?}] }
+    const messages: Array<Record<string, unknown>> = [];
+
+    for (const msg of (resolvedMessages ?? [])) {
+        const role = msg.role;
+        const contentParts = Array.isArray(msg.content) ? msg.content : [];
+
+        if (role === "user") {
+            // User message: 提取文本
+            let text = "";
+            for (const part of contentParts) {
+                const typed = part as { type?: string; text?: string };
+                if (typed.type === "text" && typed.text) {
+                    text += typed.text;
+                }
+            }
+            if (text) {
+                messages.push({ role: "user", content: text });
+            }
+        } else if (role === "assistant") {
+            // Assistant message: 提取文本 + tool_calls
+            let text = "";
+            const toolCalls: Array<{ id: string; type: string; function: { name: string; arguments: string } }> = [];
+
+            for (const part of contentParts) {
+                const typed = part as { type?: string; text?: string; tool_call?: { id: string; name: string; arguments: unknown } };
+                if (typed.type === "text" && typed.text) {
+                    text += typed.text;
+                } else if (typed.type === "tool_call" && typed.tool_call) {
+                    toolCalls.push({
+                        id: typed.tool_call.id,
+                        type: "function",
+                        function: {
+                            name: typed.tool_call.name,
+                            arguments: typeof typed.tool_call.arguments === "string"
+                                ? typed.tool_call.arguments
+                                : JSON.stringify(typed.tool_call.arguments),
+                        },
+                    });
+                }
+            }
+
+            const assistantMsg: Record<string, unknown> = { role: "assistant" };
+            if (text) assistantMsg.content = text;
+            if (toolCalls.length > 0) assistantMsg.tool_calls = toolCalls;
+            if (text || toolCalls.length > 0) messages.push(assistantMsg);
+        } else if (role === "tool") {
+            // Tool message: 提取 tool_result
+            for (const part of contentParts) {
+                const typed = part as { type?: string; tool_result?: { tool_call_id: string; content: string } };
+                if (typed.type === "tool_result" && typed.tool_result) {
+                    messages.push({
+                        role: "tool",
+                        content: typed.tool_result.content,
+                        tool_call_id: typed.tool_result.tool_call_id,
+                    });
+                }
+            }
+        }
+    }
+
+    // 添加当前 userMessage
+    const userContent = typeof userMessage.content === "string"
+        ? userMessage.content
+        : (userMessage.content ?? [])
+            .filter((p: any) => p.type === "text")
+            .map((p: any) => p.text)
+            .join("");
+
+    if (userContent) {
+        messages.push({ role: "user", content: userContent });
+    }
+
+    return { messages };
 };
 
 const buildAgentRequestHeaders = (
@@ -1025,6 +1107,7 @@ export function EvaluationWorkspace({
                     label: updates.label,
                     notes: updates.notes ?? null,
                     agentBaseUrl: updates.agentBaseUrl ?? null,
+                    mode: updates.mode ?? undefined,
                 }),
             });
             await refreshTree();
@@ -1407,9 +1490,10 @@ export function EvaluationWorkspace({
 
         try {
             const versionId = activeVersion.id;
-            const agentEndpoint = `${normalizeAgentBaseUrl(
-                activeVersion.agentBaseUrl,
-            )}${AGENT_STREAM_PATH}`;
+            const versionMode: VersionMode = activeVersion.mode ?? "agent";
+            const agentEndpoint = versionMode === "voice-agent"
+                ? normalizeAgentBaseUrl(activeVersion.agentBaseUrl)
+                : `${normalizeAgentBaseUrl(activeVersion.agentBaseUrl)}${AGENT_STREAM_PATH}`;
 
             const casesToRun = targets;
 
@@ -1451,22 +1535,53 @@ export function EvaluationWorkspace({
                         context.headers,
                         traceId,
                     );
-                    const requestBody = buildAgentRequestBody(
-                        context.environment,
-                        context.resolvedMessages,
-                        testCase.userMessage,
-                        context.headers,
-                        traceId,
-                    );
+
+                    if (versionMode === "voice-agent") {
+                        const token = localStorage.getItem(`voice-agent-token:${activeVersion.id}`);
+                        if (token) {
+                            // 支持用户填入 "Bearer xxx" 或直接填 "xxx"
+                            headers["Authorization"] = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+                        }
+                    }
+
+                    let requestBody: Record<string, unknown>;
+                    if (versionMode === "voice-agent") {
+                        requestBody = buildVoiceAgentRequestBody(
+                            context.resolvedMessages,
+                            testCase.userMessage,
+                        );
+                    } else {
+                        requestBody = buildAgentRequestBody(
+                            context.environment,
+                            context.resolvedMessages,
+                            testCase.userMessage,
+                            context.headers,
+                            traceId,
+                        );
+                    }
 
                     let response: Response;
                     try {
-                        response = await fetch(agentEndpoint, {
-                            method: "POST",
-                            body: JSON.stringify(requestBody),
-                            headers,
-                            signal: abortController.signal,
-                        });
+                        if (versionMode === "voice-agent") {
+                            // Voice Agent: 通过服务端代理避免 CORS
+                            response = await fetch("/api/evaluations/run/voice-agent", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                    targetUrl: agentEndpoint,
+                                    headers,
+                                    body: requestBody,
+                                }),
+                                signal: abortController.signal,
+                            });
+                        } else {
+                            response = await fetch(agentEndpoint, {
+                                method: "POST",
+                                body: JSON.stringify(requestBody),
+                                headers,
+                                signal: abortController.signal,
+                            });
+                        }
                     } catch (fetchError) {
                         // Check if this was an abort
                         if (fetchError instanceof Error && fetchError.name === 'AbortError') {
@@ -1487,80 +1602,87 @@ export function EvaluationWorkspace({
                         );
                     }
 
-                    const reader = response.body?.getReader();
-                    if (!reader) {
-                        throw new Error(
-                            "No response body reader available from agent.",
-                        );
-                    }
-
-                    const decoder = new TextDecoder();
                     let responseContent = "";
-                    let done = false;
-                    while (!done) {
-                        const { value, done: readerDone } = await reader.read();
-                        if (value) {
-                            const chunk = decoder.decode(value, { stream: !readerDone });
-                            responseContent += chunk;
+
+                    if (versionMode === "voice-agent") {
+                        // Voice Agent: JSON 响应
+                        const jsonResponse = await response.json();
+                        responseContent = JSON.stringify(jsonResponse);
+                    } else {
+                        // SSE Agent: 流式读取
+                        const reader = response.body?.getReader();
+                        if (!reader) {
+                            throw new Error(
+                                "No response body reader available from agent.",
+                            );
                         }
-                        done = readerDone;
+
+                        const decoder = new TextDecoder();
+                        let done = false;
+                        while (!done) {
+                            const { value, done: readerDone } = await reader.read();
+                            if (value) {
+                                const chunk = decoder.decode(value, { stream: !readerDone });
+                                responseContent += chunk;
+                            }
+                            done = readerDone;
+                        }
+                        // Final flush of decoder
+                        responseContent += decoder.decode();
                     }
-                    // Final flush of decoder
-                    responseContent += decoder.decode();
 
-                    // ========== 前端诊断：分析 SSE 响应 ==========
-                    console.log(`[Case Execution Debug] Analyzing responseContent for case: ${testCase.title}`);
-                    const lines = responseContent.split("\n");
-                    const eventTypes = new Map<string, number>();
-                    let toolCallEvents = 0;
-                    let toolResultEvents = 0;
-                    const toolEventDetails: any[] = [];
+                    // ========== 前端诊断：分析响应 ==========
+                    if (versionMode !== "voice-agent") {
+                        console.log(`[Case Execution Debug] Analyzing responseContent for case: ${testCase.title}`);
+                        const lines = responseContent.split("\n");
+                        const eventTypes = new Map<string, number>();
+                        let toolCallEvents = 0;
+                        let toolResultEvents = 0;
 
-                    for (const line of lines) {
-                        if (line.startsWith("data: ")) {
-                            try {
-                                const event = JSON.parse(line.substring(6)) as any;
-                                const type = event.type || "unknown";
-                                eventTypes.set(type, (eventTypes.get(type) || 0) + 1);
+                        for (const line of lines) {
+                            if (line.startsWith("data: ")) {
+                                try {
+                                    const event = JSON.parse(line.substring(6)) as any;
+                                    const type = event.type || "unknown";
+                                    eventTypes.set(type, (eventTypes.get(type) || 0) + 1);
 
-                                // 收集 tool 相关事件的详细信息
-                                if (type.toLowerCase().includes("tool")) {
-                                    const detail = {
-                                        type,
-                                        toolName: event.toolName,
-                                        toolCallId: event.toolCallId,
-                                        hasInput: !!event.input,
-                                        hasOutput: !!event.output,
-                                    };
-
-                                    if (type.includes("call") || type.includes("use")) {
-                                        toolCallEvents++;
-                                        console.log(`[Case Execution Debug] 🔧 Tool Call Event:`, detail);
-                                    } else if (type.includes("result")) {
-                                        toolResultEvents++;
-                                        console.log(`[Case Execution Debug] ✅ Tool Result Event:`, detail);
+                                    if (type.toLowerCase().includes("tool")) {
+                                        if (type.includes("call") || type.includes("use")) {
+                                            toolCallEvents++;
+                                            console.log(`[Case Execution Debug] Tool Call Event:`, {
+                                                type,
+                                                hasToolName: !!event.toolName,
+                                                hasToolCallId: !!event.toolCallId,
+                                                hasInput: !!event.input,
+                                                toolName: event.toolName,
+                                            });
+                                        } else if (type.includes("result")) {
+                                            toolResultEvents++;
+                                            console.log(`[Case Execution Debug] Tool Result Event:`, {
+                                                type,
+                                                hasToolName: !!event.toolName,
+                                                hasToolCallId: !!event.toolCallId,
+                                                toolName: event.toolName,
+                                            });
+                                        }
                                     }
-
-                                    toolEventDetails.push(detail);
+                                } catch {
+                                    // Skip invalid JSON
                                 }
-                            } catch {
-                                // Skip invalid JSON
                             }
                         }
-                    }
 
-                    console.log("[Case Execution Debug] SSE Response Summary:", {
-                        totalLines: lines.length,
-                        uniqueEventTypes: Array.from(eventTypes.keys()),
-                        eventTypeCounts: Object.fromEntries(eventTypes),
-                        toolCallEvents,
-                        toolResultEvents,
-                    });
+                        console.log("[Case Execution Debug] SSE Response Summary:", {
+                            totalLines: lines.length,
+                            uniqueEventTypes: Array.from(eventTypes.keys()),
+                            eventTypeCounts: Object.fromEntries(eventTypes),
+                            toolCallEvents,
+                            toolResultEvents,
+                        });
 
-                    if (toolCallEvents === 0 && toolResultEvents > 0) {
-                        console.warn("⚠️ [Case Execution Debug] ISSUE DETECTED: No tool-call events but tool-result events exist!");
-                        console.warn("This explains why tool calls are missing from the display.");
-                        console.warn("Check the event type names in the SSE response.");
+                        if (toolCallEvents === 0 && toolResultEvents > 0) {
+                            console.warn("[Case Execution Debug] ISSUE DETECTED: No tool-call events but tool-result events exist!");
+                        }
                     }
                     // ========== 诊断结束 ==========
 
@@ -1598,11 +1720,12 @@ export function EvaluationWorkspace({
                     } catch (saveError) {
                         console.error("❌ [SaveResult] Failed to save result:", saveError);
 
-                        // 保存失败：更新前端状态为失败
+                        // 保存失败：保留 responseContent 以便前端仍能展示
                         updateCaseRunSummary(versionId, context.id, testCase.id, {
-                            status: "failed",
+                            status: "succeeded",
                             durationMs,
                             completedAt,
+                            responseContent,
                         });
 
                         // 计算响应大小并显示警告
@@ -2229,6 +2352,7 @@ export function EvaluationWorkspace({
                                 onRefresh={refreshTree}
                                 versionId={activeVersion.id}
                                 onUpdateCase={handleUpdateCase}
+                                versionMode={activeVersion.mode ?? "agent"}
                             />
                         ) : null}
                     </>
@@ -2471,6 +2595,10 @@ function VersionSummary({
                         label="Agent endpoint"
                         value={version.agentBaseUrl ?? "—"}
                     />
+                    <StatTile
+                        label="Mode"
+                        value={version.mode === "voice-agent" ? "Voice Agent (JSON)" : "Agent (SSE)"}
+                    />
                 </div>
                 <div className="space-y-3">
                     <h4 className="text-sm font-semibold text-slate-700">
@@ -2534,12 +2662,18 @@ function VersionEditDialog({
     const [agentBaseUrl, setAgentBaseUrl] = useState(
         version.agentBaseUrl ?? "",
     );
+    const [mode, setMode] = useState<VersionMode>(version.mode ?? "agent");
+    const [voiceAgentToken, setVoiceAgentToken] = useState("");
 
     useEffect(() => {
         if (!open) return;
         setLabel(version.label);
         setNotes(version.notes ?? "");
         setAgentBaseUrl(version.agentBaseUrl ?? "");
+        setMode(version.mode ?? "agent");
+        setVoiceAgentToken(
+            localStorage.getItem(`voice-agent-token:${version.id}`) ?? "",
+        );
     }, [open, version]);
 
     const totalContexts = version.rootContexts.length;
@@ -2554,10 +2688,17 @@ function VersionEditDialog({
             return;
         }
 
+        if (mode === "voice-agent" && voiceAgentToken) {
+            localStorage.setItem(`voice-agent-token:${version.id}`, voiceAgentToken);
+        } else {
+            localStorage.removeItem(`voice-agent-token:${version.id}`);
+        }
+
         await onSave({
             label,
             notes,
             agentBaseUrl,
+            mode,
         });
         onOpenChange(false);
     };
@@ -2594,7 +2735,9 @@ function VersionEditDialog({
                             </Label>
                             <Input
                                 id="edit-version-agent"
-                                placeholder="https://example.com/agent"
+                                placeholder={mode === "voice-agent"
+                                    ? "https://example.com/voice-agent-proxy/chat"
+                                    : "https://example.com/agent"}
                                 value={agentBaseUrl}
                                 onChange={(event) =>
                                     setAgentBaseUrl(event.target.value)
@@ -2602,6 +2745,43 @@ function VersionEditDialog({
                             />
                         </div>
                     </div>
+                    <div className="space-y-2">
+                        <Label htmlFor="edit-version-mode">Mode</Label>
+                        <Select
+                            value={mode}
+                            onValueChange={(v) => setMode(v as VersionMode)}
+                        >
+                            <SelectTrigger id="edit-version-mode">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="agent">Agent (SSE Stream)</SelectItem>
+                                <SelectItem value="voice-agent">Voice Agent (JSON)</SelectItem>
+                            </SelectContent>
+                        </Select>
+                        <p className="text-xs text-slate-500">
+                            {mode === "voice-agent"
+                                ? "Voice Agent uses the full URL as endpoint and expects JSON response."
+                                : "Agent appends /agent/v1/chat/completion/stream and expects SSE response."}
+                        </p>
+                    </div>
+                    {mode === "voice-agent" && (
+                        <div className="space-y-2">
+                            <Label htmlFor="edit-version-token">Auth Token</Label>
+                            <Input
+                                id="edit-version-token"
+                                type="text"
+                                placeholder="Bearer token for voice agent endpoint"
+                                value={voiceAgentToken}
+                                onChange={(event) =>
+                                    setVoiceAgentToken(event.target.value)
+                                }
+                            />
+                            <p className="text-xs text-slate-500">
+                                Stored locally in browser. Sent as Authorization: Bearer header.
+                            </p>
+                        </div>
+                    )}
                     <div className="space-y-2">
                         <Label htmlFor="edit-version-notes">Notes</Label>
                         <Textarea
@@ -3200,6 +3380,7 @@ function CaseSummary({
     onRefresh,
     versionId,
     onUpdateCase,
+    versionMode,
 }: {
     context: EvaluationContext;
     testCase: EvaluationCase;
@@ -3212,6 +3393,7 @@ function CaseSummary({
     onRefresh: () => Promise<void>;
     versionId: string;
     onUpdateCase: (contextId: string, caseId: string, updates: Partial<EvaluationCase>) => Promise<void>;
+    versionMode: VersionMode;
 }) {
     const status = testCase.lastRunSummary?.status;
     const [isSaving, setIsSaving] = useState(false);
@@ -3333,50 +3515,42 @@ function CaseSummary({
             return;
         }
 
-        // 前端诊断：分析 responseContent
-        console.log("[Frontend Debug] Analyzing responseContent before saving...");
+        // 前端诊断：仅对 SSE agent 模式分析 responseContent
+        if (versionMode !== "voice-agent") {
+            console.log("[Frontend Debug] Analyzing responseContent before saving...");
 
+            const lines = responseContent.split("\n");
+            const eventTypes = new Map<string, number>();
+            let toolCallCount = 0;
+            let toolResultCount = 0;
 
-        // 解析 SSE 事件
-        const lines = responseContent.split("\n");
-        const eventTypes = new Map<string, number>();
-        let toolCallCount = 0;
-        let toolResultCount = 0;
+            for (const line of lines) {
+                if (line.startsWith("data: ")) {
+                    try {
+                        const event = JSON.parse(line.substring(6)) as any;
+                        const type = event.type || "unknown";
+                        eventTypes.set(type, (eventTypes.get(type) || 0) + 1);
 
-        for (const line of lines) {
-            if (line.startsWith("data: ")) {
-                try {
-                    const event = JSON.parse(line.substring(6)) as any;
-                    const type = event.type || "unknown";
-                    eventTypes.set(type, (eventTypes.get(type) || 0) + 1);
-
-                    // 检查 tool 相关事件
-                    if (type.toLowerCase().includes("tool")) {
-                        if (type.includes("call") || type.includes("use")) {
-                            toolCallCount++;
-                            console.log(`[Frontend Debug] Found tool-call event:`, {
-                                type,
-                                hasToolName: !!event.toolName,
-                                hasToolCallId: !!event.toolCallId,
-                                hasInput: !!event.input,
-                                toolName: event.toolName,
-                            });
-                        } else if (type.includes("result")) {
-                            toolResultCount++;
+                        if (type.toLowerCase().includes("tool")) {
+                            if (type.includes("call") || type.includes("use")) {
+                                toolCallCount++;
+                            } else if (type.includes("result")) {
+                                toolResultCount++;
+                            }
                         }
+                    } catch {
+                        // Skip invalid JSON
                     }
-                } catch {
-                    // Skip invalid JSON
                 }
             }
-        }
 
-        console.log("[Frontend Debug] SSE Analysis:", {
-            totalLines: lines.length,
-            eventTypes: Object.fromEntries(eventTypes),
-            toolCallEvents: toolCallCount,
-            toolResultEvents: toolResultCount,
-        });
+            console.log("[Frontend Debug] SSE Analysis:", {
+                totalLines: lines.length,
+                eventTypes: Object.fromEntries(eventTypes),
+                toolCallEvents: toolCallCount,
+                toolResultEvents: toolResultCount,
+            });
+        }
 
         setIsSaving(true);
         try {
@@ -3389,6 +3563,7 @@ function CaseSummary({
                         userMessage: testCase.userMessage,
                         responseContent: responseContent,
                         caseTitle: testCase.title,
+                        mode: versionMode,
                     }),
                 }
             );
@@ -3404,7 +3579,7 @@ function CaseSummary({
                 messagesAdded: number;
             };
             toast.success(
-                `✅ Created new context with ${result.messagesAdded} messages`
+                `Created new context with ${result.messagesAdded} messages`
             );
 
             // 刷新数据以显示新创建的 context
@@ -3647,7 +3822,7 @@ function CaseSummary({
                             <div className="space-y-1">
                                 <CardTitle>Response content</CardTitle>
                                 <CardDescription>
-                                    Stream response from the agent.
+                                    {versionMode === "voice-agent" ? "JSON response from the voice agent." : "Stream response from the agent."}
                                 </CardDescription>
                             </div>
                             {(testCase.lastRunSummary.responseContent || loadedResponseContent) && (
@@ -3667,11 +3842,19 @@ function CaseSummary({
                     </CardHeader>
                     <CardContent>
                         {testCase.lastRunSummary.responseContent || loadedResponseContent ? (
-                            <SSEResponseViewer
-                                responseContent={
-                                    testCase.lastRunSummary.responseContent || loadedResponseContent!
-                                }
-                            />
+                            versionMode === "voice-agent" ? (
+                                <VoiceAgentResponseViewer
+                                    responseContent={
+                                        testCase.lastRunSummary.responseContent || loadedResponseContent!
+                                    }
+                                />
+                            ) : (
+                                <SSEResponseViewer
+                                    responseContent={
+                                        testCase.lastRunSummary.responseContent || loadedResponseContent!
+                                    }
+                                />
+                            )
                         ) : isLoadingResponse ? (
                             <div className="flex items-center justify-center py-8 text-slate-500">
                                 <div className="flex items-center gap-2">
@@ -4513,6 +4696,207 @@ function SSEResponseViewer({ responseContent }: { responseContent: string }) {
                                     </pre>
                                 </div>
                             )}
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
+// Voice Agent Response Viewer
+interface VoiceAgentMessage {
+    role: string;
+    content?: string;
+    tool_calls?: Array<{
+        id: string;
+        type?: string;
+        function: {
+            name: string;
+            arguments: string | Record<string, unknown>;
+        };
+    }>;
+    tool_call_id?: string;
+}
+
+function VoiceAgentResponseViewer({ responseContent }: { responseContent: string }) {
+    const [expandedEvents, setExpandedEvents] = useState<Set<number>>(new Set());
+
+    const { messages: parsed, raw } = useMemo(() => {
+        try {
+            const data = JSON.parse(responseContent) as Record<string, unknown>;
+            // 支持 { messages: [...] } 和 { data: { messages: [...] } } 两种结构
+            const messages = (
+                (data.messages as VoiceAgentMessage[] | undefined)
+                ?? ((data.data as Record<string, unknown> | undefined)?.messages as VoiceAgentMessage[] | undefined)
+                ?? []
+            );
+            return { messages, raw: JSON.stringify(data, null, 2) };
+        } catch {
+            return { messages: [] as VoiceAgentMessage[], raw: responseContent };
+        }
+    }, [responseContent]);
+
+    // 将 messages 拆成与 SSE 类似的 event 列表
+    const events = useMemo(() => {
+        const result: Array<{
+            type: string;
+            label: string | null;
+            borderColor: string;
+            collapsible: boolean;
+            summary?: string;
+            detail?: unknown;
+        }> = [];
+
+        for (const msg of parsed) {
+            if (msg.role === "assistant" && msg.tool_calls?.length) {
+                for (const tc of msg.tool_calls) {
+                    let args: unknown;
+                    if (typeof tc.function.arguments === "string") {
+                        try { args = JSON.parse(tc.function.arguments); } catch { args = tc.function.arguments; }
+                    } else {
+                        args = tc.function.arguments;
+                    }
+                    result.push({
+                        type: "tool-call",
+                        label: tc.function.name,
+                        borderColor: "border-cyan-500",
+                        collapsible: true,
+                        detail: { toolName: tc.function.name, id: tc.id, input: args },
+                    });
+                }
+            }
+            if (msg.role === "tool") {
+                let output: unknown;
+                if (typeof msg.content === "string") {
+                    try { output = JSON.parse(msg.content); } catch { output = msg.content; }
+                } else {
+                    output = msg.content;
+                }
+                result.push({
+                    type: "tool-result",
+                    label: msg.tool_call_id ?? null,
+                    borderColor: "border-green-500",
+                    collapsible: true,
+                    detail: { toolCallId: msg.tool_call_id, output },
+                });
+            }
+            if (msg.role === "assistant" && msg.content) {
+                result.push({
+                    type: "text",
+                    label: null,
+                    borderColor: "border-orange-500",
+                    collapsible: false,
+                    summary: msg.content,
+                });
+            }
+        }
+        return result;
+    }, [parsed]);
+
+    // 默认展开所有 collapsible 事件
+    useEffect(() => {
+        const all = new Set<number>();
+        events.forEach((e, i) => { if (e.collapsible) all.add(i); });
+        setExpandedEvents(all);
+    }, [events]);
+
+    const toggleEvent = useCallback((index: number) => {
+        setExpandedEvents((prev) => {
+            const next = new Set(prev);
+            if (next.has(index)) { next.delete(index); } else { next.add(index); }
+            return next;
+        });
+    }, []);
+
+    if (parsed.length === 0) {
+        return (
+            <div className="space-y-2">
+                <div className="text-xs text-slate-500">
+                    No <code>messages</code> array found. Raw response:
+                </div>
+                <pre className="max-h-96 overflow-auto rounded-lg border bg-slate-950/90 px-4 py-3 text-xs text-slate-100">
+                    {raw}
+                </pre>
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-3">
+            <div className="flex items-center gap-2">
+                <Badge variant="outline" className="font-mono text-xs">
+                    Voice Agent
+                </Badge>
+                <Badge variant="secondary" className="text-xs">
+                    {events.length} events
+                </Badge>
+            </div>
+
+            <div className="space-y-2">
+                {events.map((event, index) => {
+                    const isExpanded = expandedEvents.has(index);
+
+                    return (
+                        <div
+                            key={index}
+                            className={`rounded border-l-4 bg-white p-3 shadow-sm ${event.borderColor} ${
+                                event.collapsible ? "cursor-pointer" : ""
+                            }`}
+                            onClick={event.collapsible ? () => toggleEvent(index) : undefined}
+                        >
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <span className="font-mono text-xs font-bold uppercase text-slate-700">
+                                        {event.type}
+                                    </span>
+                                    {event.label && (
+                                        <Badge variant="secondary" className="text-[10px]">
+                                            {event.label}
+                                        </Badge>
+                                    )}
+                                    {event.collapsible && (
+                                        <span className="text-xs text-slate-400">
+                                            {isExpanded ? "▼" : "▶"}
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+
+                            {event.type === "text" && event.summary && (
+                                <div className="mt-2 whitespace-pre-wrap text-sm text-slate-800">
+                                    {event.summary}
+                                </div>
+                            )}
+
+                            {event.collapsible && isExpanded && event.detail != null ? (
+                                <div className="mt-2">
+                                    <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs text-slate-700">
+                                        {highlightImportantKeys(event.detail)
+                                            .split("\n")
+                                            .map((line, i) => {
+                                                const match = line.match(/\*\*"(.+?)"\*\*/);
+                                                if (match) {
+                                                    const parts = line.split(/\*\*"(.+?)"\*\*/);
+                                                    return (
+                                                        <div key={i} className="break-words">
+                                                            {parts.map((part, j) =>
+                                                                j % 2 === 1 ? (
+                                                                    <strong key={j} className="rounded bg-slate-200 px-1">
+                                                                        &quot;{part}&quot;
+                                                                    </strong>
+                                                                ) : (
+                                                                    part
+                                                                ),
+                                                            )}
+                                                        </div>
+                                                    );
+                                                }
+                                                return <div key={i} className="break-words">{line}</div>;
+                                            })}
+                                    </pre>
+                                </div>
+                            ) : null}
                         </div>
                     );
                 })}

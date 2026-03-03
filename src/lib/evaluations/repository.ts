@@ -18,6 +18,7 @@ import type {
     RunSelectionPayload,
     RunStatus,
     RunSummary,
+    VersionMode,
 } from "./models";
 import type { AssistantModelMessage, UserModelMessage } from "./types";
 import {
@@ -319,6 +320,7 @@ export async function fetchEvaluationTree(): Promise<EvaluationTree> {
                 label: versionRow.label,
                 notes: versionRow.notes ?? undefined,
                 agentBaseUrl: versionRow.agentBaseUrl ?? undefined,
+                mode: (versionRow.mode as VersionMode) ?? "agent",
                 createdAt: toIso(versionRow.createdAt),
                 updatedAt: toIso(versionRow.updatedAt),
                 rootContexts: rootTrees,
@@ -335,6 +337,7 @@ export async function createEvaluationVersion(input?: {
     label?: string;
     notes?: string;
     agentBaseUrl?: string;
+    mode?: VersionMode;
 }): Promise<string> {
     const db = await getDb();
     const id = crypto.randomUUID();
@@ -382,6 +385,7 @@ export async function createEvaluationVersion(input?: {
         label,
         notes: input?.notes ?? null,
         agentBaseUrl: input?.agentBaseUrl ?? null,
+        mode: input?.mode ?? "agent",
         createdBy: null,
     };
     await db.insert(evaluationVersions).values(values);
@@ -391,7 +395,7 @@ export async function createEvaluationVersion(input?: {
 export async function updateEvaluationVersion(
     id: string,
     updates: Partial<
-        Pick<EvaluationVersion, "label" | "notes" | "agentBaseUrl">
+        Pick<EvaluationVersion, "label" | "notes" | "agentBaseUrl" | "mode">
     >
 ): Promise<void> {
     const db = await getDb();
@@ -404,6 +408,7 @@ export async function updateEvaluationVersion(
     if (updates.agentBaseUrl !== undefined) {
         payload.agentBaseUrl = updates.agentBaseUrl ?? null;
     }
+    if (updates.mode !== undefined) payload.mode = updates.mode;
 
     await db
         .update(evaluationVersions)
@@ -434,6 +439,7 @@ export async function duplicateEvaluationVersion(id: string): Promise<string> {
         label: `${original.label} (Copy)`,
         notes: original.notes,
         agentBaseUrl: original.agentBaseUrl,
+        mode: original.mode,
         createdBy: original.createdBy,
     });
 

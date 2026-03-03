@@ -3,6 +3,7 @@ import {
     deleteEvaluationVersion,
     updateEvaluationVersion,
 } from "@/lib/evaluations/repository";
+import type { VersionMode } from "@/lib/evaluations/models";
 
 type RouteParams = { params: { versionId: string } };
 
@@ -21,6 +22,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
                   label?: string;
                   notes?: string | null;
                   agentBaseUrl?: string | null;
+                  mode?: string | null;
               })
             : {};
 
@@ -28,6 +30,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
             label: body?.label,
             notes: body?.notes ?? undefined,
             agentBaseUrl: body?.agentBaseUrl ?? undefined,
+            mode: (body?.mode as VersionMode) ?? undefined,
         });
 
         return NextResponse.json({ success: true });

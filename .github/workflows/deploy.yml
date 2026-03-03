@@ -65,7 +65,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           environment: preview
-          command: d1 migrations apply next-cf-app --env preview
+          command: d1 migrations apply eval-evaluations --env preview
 
       - name: Deploy to Preview
         uses: cloudflare/wrangler-action@v3
@@ -92,7 +92,7 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: '🚀 Preview deployed! Check it out at: https://next-cf-app-preview.effendi-official.workers.dev'
+              body: '🚀 Preview deployed! Check it out at: https://eval-evaluations-preview.effendi-official.workers.dev'
             })
 
   # Deploy to production (main branch)
@@ -146,14 +146,14 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: d1 export next-cf-app --output ${{ steps.backup.outputs.filename }}
+          command: d1 export eval-evaluations --output ${{ steps.backup.outputs.filename }}
 
       - name: Run database migrations (Production)
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: d1 migrations apply next-cf-app
+          command: d1 migrations apply eval-evaluations
 
       - name: Deploy to Production
         uses: cloudflare/wrangler-action@v3

@@ -282,3 +282,161 @@ export function debugPrintMessages(messages: ConvertedMessage[]): void {
     console.log("=== Converted Messages ===");
     console.log(JSON.stringify(messages, null, 2));
 }
+
+/**
+ * Voice Agent 响应格式
+ */
+interface VoiceAgentMessage {
+    role: string;
+    content?: string;
+    tool_calls?: Array<{
+        id: string;
+        type?: string;
+        function: {
+            name: string;
+            arguments: string | Record<string, unknown>;
+        };
+    }>;
+    tool_call_id?: string;
+}
+
+interface VoiceAgentResponse {
+    messages: VoiceAgentMessage[];
+}
+
+/**
+ * 将 Voice Agent 的 JSON 响应转换为标准消息格式
+ * Voice Agent 返回 { messages: [{role, content, tool_calls?, tool_call_id?}] }
+ */
+export function convertVoiceAgentResponseToMessages(
+    userMessage: UserModelMessage,
+    responseContent: string
+): ConvertedMessage[] {
+    const messages: ConvertedMessage[] = [];
+
+    // 1. 添加 user message
+    const userContent: MessageContent[] = [];
+    if (typeof userMessage.content === "string") {
+        userContent.push({ type: "text", text: userMessage.content });
+    } else {
+        for (const part of userMessage.content) {
+            if (part.type === "text") {
+                userContent.push({ type: "text", text: part.text });
+            }
+        }
+    }
+    messages.push({ role: "user", content: userContent });
+
+    // 2. 解析 Voice Agent JSON 响应
+    let voiceMessages: VoiceAgentMessage[];
+    try {
+        const data = JSON.parse(responseContent) as Record<string, unknown>;
+        // 支持 { messages: [...] } 和 { data: { messages: [...] } } 两种结构
+        voiceMessages = (
+            (data.messages as VoiceAgentMessage[] | undefined)
+            ?? ((data.data as Record<string, unknown> | undefined)?.messages as VoiceAgentMessage[] | undefined)
+            ?? []
+        );
+    } catch {
+        console.error("[VoiceAgentConverter] Failed to parse response JSON");
+        return messages;
+    }
+
+    if (voiceMessages.length === 0) {
+        console.warn("[VoiceAgentConverter] No messages found in response");
+        return messages;
+    }
+
+    console.log(`[VoiceAgentConverter] Processing ${voiceMessages.length} messages`);
+
+    // 3. 建立 tool_call_id → tool_name 映射
+    const toolCallIdToName = new Map<string, string>();
+    for (const msg of voiceMessages) {
+        if (msg.tool_calls) {
+            for (const tc of msg.tool_calls) {
+                toolCallIdToName.set(tc.id, tc.function.name);
+            }
+        }
+    }
+
+    // 4. 转换每条消息
+    for (const msg of voiceMessages) {
+        if (msg.role === "assistant") {
+            const content: MessageContent[] = [];
+
+            // 文本内容
+            if (msg.content) {
+                content.push({ type: "text", text: msg.content });
+            }
+
+            // tool_calls
+            if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
+                for (const tc of msg.tool_calls) {
+                    let args: Record<string, unknown>;
+                    if (typeof tc.function.arguments === "string") {
+                        try {
+                            args = JSON.parse(tc.function.arguments);
+                        } catch {
+                            args = { raw: tc.function.arguments };
+                        }
+                    } else {
+                        args = tc.function.arguments;
+                    }
+
+                    content.push({
+                        type: "tool_call",
+                        tool_call: {
+                            id: tc.id,
+                            name: tc.function.name,
+                            arguments: args,
+                        },
+                    });
+                }
+            }
+
+            if (content.length > 0) {
+                messages.push({ role: "assistant", content });
+            }
+        } else if (msg.role === "tool") {
+            const toolCallId = msg.tool_call_id ?? "";
+            const toolName = toolCallIdToName.get(toolCallId) ?? "";
+
+            // 解析 tool content，提取 modelVisibleData（与 SSE 模式一致）
+            let toolOutput: unknown = msg.content ?? "";
+            let success = true;
+            if (typeof msg.content === "string") {
+                try {
+                    const parsed = JSON.parse(msg.content) as Record<string, unknown>;
+                    success = (parsed.success as boolean) ?? true;
+                    toolOutput = (parsed as { modelVisibleData?: { data?: unknown } }).modelVisibleData?.data ?? parsed;
+                } catch {
+                    // 保持原始字符串
+                }
+            }
+
+            const contentString = typeof toolOutput === "string"
+                ? toolOutput
+                : JSON.stringify(toolOutput);
+
+            const content: MessageContent[] = [];
+            content.push({
+                type: "tool_result",
+                tool_result: {
+                    name: toolName,
+                    content: contentString,
+                    success,
+                    tool_call_id: toolCallId,
+                },
+            });
+
+            messages.push({ role: "tool", content });
+        }
+    }
+
+    console.log("[VoiceAgentConverter] Conversion complete:", {
+        totalMessages: messages.length,
+        messageRoles: messages.map(m => m.role),
+    });
+
+    return messages;
+}

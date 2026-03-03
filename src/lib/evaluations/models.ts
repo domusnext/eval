@@ -81,11 +81,14 @@ export type EvaluationContext = {
     updatedAt: string;
 };
 
+export type VersionMode = "agent" | "voice-agent";
+
 export type EvaluationVersion = {
     id: string;
     label: string;
     notes?: string;
     agentBaseUrl?: string;
+    mode: VersionMode;
     createdAt: string;
     updatedAt: string;
     rootContexts: EvaluationContext[]; // 修改：多个根节点

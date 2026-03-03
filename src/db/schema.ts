@@ -14,6 +14,7 @@ export const evaluationVersions = sqliteTable("evaluation_versions", {
     label: text("label").notNull(),
     notes: text("notes"),
     agentBaseUrl: text("agent_base_url"),
+    mode: text("mode").notNull().default("agent"),
     createdBy: text("created_by"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
         .notNull()

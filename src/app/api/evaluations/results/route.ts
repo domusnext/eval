@@ -79,10 +79,10 @@ export async function POST(request: NextRequest) {
         } = body;
 
         // 验证必需参数
-        if (!versionId || !contextId || !caseId || !status || !responseContent) {
+        if (!versionId || !contextId || !caseId || !status || (status !== "failed" && !responseContent)) {
             return NextResponse.json(
                 {
-                    error: "Missing required fields: versionId, contextId, caseId, status, responseContent",
+                    error: "Missing required fields: versionId, contextId, caseId, status, responseContent (responseContent optional when status is failed)",
                 },
                 { status: 400 }
             );
