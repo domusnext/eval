@@ -13,7 +13,7 @@ export async function GET() {
         });
 
         // 2. Check if D1 database binding exists
-        const db = env.eval_d1_db;
+        const db = (env as any).eval_d1_db;
         console.log("[DB Check] D1 binding:", {
             hasDb: !!db,
             dbType: typeof db
