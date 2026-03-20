@@ -481,7 +481,10 @@ export function EvaluationWorkspace({
         concurrentRequests: 5,
     });
     const [isRefreshing, setIsRefreshing] = useState(false);
-    const [isMutating, setIsMutating] = useState(false);
+    const [mutatingKeys, setMutatingKeys] = useState<Set<string>>(
+        () => new Set(),
+    );
+    const mutatingKeysRef = useRef<Set<string>>(new Set());
     const [isRunConfigDialogOpen, setRunConfigDialogOpen] = useState(false);
     const [isVersionDialogOpen, setVersionDialogOpen] = useState(false);
     const [isContextDialogOpen, setContextDialogOpen] = useState(false);
@@ -533,6 +536,26 @@ export function EvaluationWorkspace({
             }
 
             return json as T;
+        },
+        [],
+    );
+
+    const withMutation = useCallback(
+        async <T,>(key: string, fn: () => Promise<T>): Promise<T | undefined> => {
+            if (mutatingKeysRef.current.has(key)) return undefined;
+            mutatingKeysRef.current.add(key);
+            setMutatingKeys(new Set(mutatingKeysRef.current));
+            try {
+                return await fn();
+            } catch (error) {
+                const message =
+                    error instanceof Error ? error.message : "Operation failed";
+                toast.error(message);
+                return undefined;
+            } finally {
+                mutatingKeysRef.current.delete(key);
+                setMutatingKeys(new Set(mutatingKeysRef.current));
+            }
         },
         [],
     );
@@ -645,7 +668,7 @@ export function EvaluationWorkspace({
         }
     }, [apiRequest, sanitizeSelections]);
 
-    const isBusy = isMutating || isRefreshing;
+    const isBusy = mutatingKeys.size > 0 || isRefreshing;
 
     // Request notification permission on component mount
     useEffect(() => {
@@ -985,9 +1008,7 @@ export function EvaluationWorkspace({
     };
 
     const handleAddVersion = async () => {
-        if (isMutating) return;
-        setIsMutating(true);
-        try {
+        await withMutation("add-version", async () => {
             const { data } = await apiRequest<{ data: { id: string } }>(
                 "/api/evaluations/versions",
                 { method: "POST", body: JSON.stringify({}) },
@@ -1000,15 +1021,7 @@ export function EvaluationWorkspace({
                 setSelectedNode({ type: "version" });
             }
             toast.success("Created new version");
-        } catch (error) {
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : "Failed to create version";
-            toast.error(message);
-        } finally {
-            setIsMutating(false);
-        }
+        });
     };
 
     const openCaseEditor = useCallback((contextId: string, caseId: string) => {
@@ -1017,9 +1030,7 @@ export function EvaluationWorkspace({
     }, []);
 
     const handleDuplicateVersion = async (version: EvaluationVersion) => {
-        if (isMutating) return;
-        setIsMutating(true);
-        try {
+        await withMutation(`dup-version:${version.id}`, async () => {
             const { data } = await apiRequest<{ data: { id: string } }>(
                 `/api/evaluations/versions/${version.id}/duplicate`,
                 { method: "POST", body: JSON.stringify({}) },
@@ -1030,19 +1041,11 @@ export function EvaluationWorkspace({
             }
             await refreshTree();
             toast.success("Duplicated version");
-        } catch (error) {
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : "Failed to duplicate version";
-            toast.error(message);
-        } finally {
-            setIsMutating(false);
-        }
+        });
     };
 
     const handleDeleteVersion = async (versionId: string) => {
-        if (isMutating) return;
+        if (mutatingKeysRef.current.has(`del-version:${versionId}`)) return;
 
         // 获取当前version以显示信息
         const version = versionsState.find(v => v.id === versionId);
@@ -1072,8 +1075,7 @@ export function EvaluationWorkspace({
             return;
         }
 
-        setIsMutating(true);
-        try {
+        await withMutation(`del-version:${versionId}`, async () => {
             await apiRequest(`/api/evaluations/versions/${versionId}`, {
                 method: "DELETE",
             });
@@ -1083,24 +1085,14 @@ export function EvaluationWorkspace({
             setSelectedNode({ type: "version" });
             await refreshTree();
             toast.success("Deleted version");
-        } catch (error) {
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : "Failed to delete version";
-            toast.error(message);
-        } finally {
-            setIsMutating(false);
-        }
+        });
     };
 
     const handleUpdateVersion = async (
         versionId: string,
         updates: Partial<EvaluationVersion>,
     ) => {
-        if (isMutating) return;
-        setIsMutating(true);
-        try {
+        await withMutation(`update-version:${versionId}`, async () => {
             await apiRequest(`/api/evaluations/versions/${versionId}`, {
                 method: "PATCH",
                 body: JSON.stringify({
@@ -1112,21 +1104,12 @@ export function EvaluationWorkspace({
             });
             await refreshTree();
             toast.success("Saved version changes");
-        } catch (error) {
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : "Failed to save version";
-            toast.error(message);
-        } finally {
-            setIsMutating(false);
-        }
+        });
     };
 
     const handleAddContext = async () => {
-        if (!activeVersion || isMutating) return;
-        setIsMutating(true);
-        try {
+        if (!activeVersion) return;
+        await withMutation("add-context", async () => {
             const { data } = await apiRequest<{ data: { id: string } }>(
                 "/api/evaluations/contexts",
                 {
@@ -1142,24 +1125,14 @@ export function EvaluationWorkspace({
             }
             await refreshTree();
             toast.success("Added new context");
-        } catch (error) {
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : "Failed to create context";
-            toast.error(message);
-        } finally {
-            setIsMutating(false);
-        }
+        });
     };
 
     const handleUpdateContext = async (
         contextId: string,
         updates: Partial<EvaluationContext>,
     ) => {
-        if (isMutating) return;
-        setIsMutating(true);
-        try {
+        await withMutation(`update-context:${contextId}`, async () => {
             await apiRequest(`/api/evaluations/contexts/${contextId}`, {
                 method: "PATCH",
                 body: JSON.stringify({
@@ -1171,21 +1144,11 @@ export function EvaluationWorkspace({
             });
             await refreshTree();
             toast.success("Saved context changes");
-        } catch (error) {
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : "Failed to save context";
-            toast.error(message);
-        } finally {
-            setIsMutating(false);
-        }
+        });
     };
 
     const handleSyncContextDefaults = async () => {
-        if (isMutating) return;
-        setIsMutating(true);
-        try {
+        await withMutation("sync-defaults", async () => {
             const response = await apiRequest<{
                 data: { updatedCount: number };
             }>("/api/evaluations/contexts/sync-defaults", {
@@ -1201,19 +1164,11 @@ export function EvaluationWorkspace({
                     ? "Synced defaults to 1 context"
                     : `Synced defaults to ${updatedCount} contexts`;
             toast.success(label);
-        } catch (error) {
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : "Failed to sync default configuration";
-            toast.error(message);
-        } finally {
-            setIsMutating(false);
-        }
+        });
     };
 
     const handleDeleteContext = async (context: EvaluationContext) => {
-        if (isMutating) return;
+        if (mutatingKeysRef.current.has(`del-context:${context.id}`)) return;
 
         // 添加确认对话框
         const caseCount = context.cases?.length || 0;
@@ -1234,8 +1189,7 @@ export function EvaluationWorkspace({
             return;
         }
 
-        setIsMutating(true);
-        try {
+        await withMutation(`del-context:${context.id}`, async () => {
             await apiRequest(`/api/evaluations/contexts/${context.id}`, {
                 method: "DELETE",
             });
@@ -1252,21 +1206,11 @@ export function EvaluationWorkspace({
             setSelectedNode({ type: "version" });
             await refreshTree();
             toast.success("Deleted context");
-        } catch (error) {
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : "Failed to delete context";
-            toast.error(message);
-        } finally {
-            setIsMutating(false);
-        }
+        });
     };
 
     const handleAddCase = async (contextId: string) => {
-        if (isMutating) return;
-        setIsMutating(true);
-        try {
+        await withMutation(`add-case:${contextId}`, async () => {
             const { data } = await apiRequest<{ data: { id: string } }>(
                 "/api/evaluations/cases",
                 {
@@ -1287,15 +1231,7 @@ export function EvaluationWorkspace({
                 setCaseDialogOpen(true);
             }
             toast.success("Added new case");
-        } catch (error) {
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : "Failed to create case";
-            toast.error(message);
-        } finally {
-            setIsMutating(false);
-        }
+        });
     };
 
     const handleUpdateCase = async (
@@ -1303,9 +1239,7 @@ export function EvaluationWorkspace({
         caseId: string,
         updates: Partial<EvaluationCase>,
     ) => {
-        if (isMutating) return;
-        setIsMutating(true);
-        try {
+        await withMutation(`update-case:${caseId}`, async () => {
             await apiRequest(`/api/evaluations/cases/${caseId}`, {
                 method: "PATCH",
                 body: JSON.stringify({
@@ -1317,20 +1251,14 @@ export function EvaluationWorkspace({
             });
             await refreshTree();
             toast.success("Saved case changes");
-        } catch (error) {
-            const message =
-                error instanceof Error ? error.message : "Failed to save case";
-            toast.error(message);
-        } finally {
-            setIsMutating(false);
-        }
+        });
     };
 
     const handleDeleteCase = async (
         contextId: string,
         testCase: EvaluationCase,
     ) => {
-        if (isMutating) return;
+        if (mutatingKeysRef.current.has(`del-case:${testCase.id}`)) return;
 
         // 添加确认对话框
         const confirmed = window.confirm(
@@ -1341,8 +1269,7 @@ export function EvaluationWorkspace({
             return;
         }
 
-        setIsMutating(true);
-        try {
+        await withMutation(`del-case:${testCase.id}`, async () => {
             await apiRequest(`/api/evaluations/cases/${testCase.id}`, {
                 method: "DELETE",
             });
@@ -1354,15 +1281,7 @@ export function EvaluationWorkspace({
             setSelectedNode({ type: "context", contextId });
             await refreshTree();
             toast.success("Deleted case");
-        } catch (error) {
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : "Failed to delete case";
-            toast.error(message);
-        } finally {
-            setIsMutating(false);
-        }
+        });
     };
 
     const gatherCasesForRun = (trigger: RunTrigger): CaseExecutionTarget[] => {
@@ -1476,13 +1395,14 @@ export function EvaluationWorkspace({
             return;
         }
 
-        if (isMutating) return;
+        if (mutatingKeysRef.current.has("run-cases")) return;
 
         // Create new AbortController for this run
         const abortController = new AbortController();
         abortControllerRef.current = abortController;
 
-        setIsMutating(true);
+        mutatingKeysRef.current.add("run-cases");
+        setMutatingKeys(new Set(mutatingKeysRef.current));
         setIsRunning(true);
         setRunningSource(source);
 
@@ -1900,7 +1820,8 @@ export function EvaluationWorkspace({
                     : "Failed to run evaluations";
             toast.error(message);
         } finally {
-            setIsMutating(false);
+            mutatingKeysRef.current.delete("run-cases");
+            setMutatingKeys(new Set(mutatingKeysRef.current));
             setIsRunning(false);
             setRunningSource(null);
             abortControllerRef.current = null;
