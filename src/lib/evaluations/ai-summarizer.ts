@@ -104,6 +104,7 @@ Summary:`;
                     ],
                     stream: false,
                 }),
+                signal: AbortSignal.timeout(30_000),
             }
         );
 

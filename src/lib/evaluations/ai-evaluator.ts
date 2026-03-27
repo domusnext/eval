@@ -126,6 +126,7 @@ Remember: Return ONLY the JSON object with no additional text.`;
                     ],
                     stream: false,
                 }),
+                signal: AbortSignal.timeout(30_000),
             }
         );
 

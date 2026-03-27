@@ -4401,6 +4401,24 @@ function getEventLabel(event: SSEEvent): string | null {
     return null;
 }
 
+function CopyChunkButton({ getData }: { getData: () => string }) {
+    const [copied, setCopied] = useState(false);
+    return (
+        <button
+            type="button"
+            className="ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            onClick={(e) => {
+                e.stopPropagation();
+                navigator.clipboard.writeText(getData());
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+            }}
+        >
+            {copied ? "Copied" : "Copy"}
+        </button>
+    );
+}
+
 function highlightImportantKeys(obj: unknown): string {
     const json = JSON.stringify(obj, null, 2);
     const importantKeys = [
@@ -4575,6 +4593,7 @@ function SSEResponseViewer({ responseContent }: { responseContent: string }) {
                                         ).toLocaleTimeString()}
                                     </span>
                                 )}
+                                <CopyChunkButton getData={() => JSON.stringify(eventData, null, 2)} />
                             </div>
 
                             {(!isCollapsible || isExpanded) && (
@@ -4782,6 +4801,11 @@ function VoiceAgentResponseViewer({ responseContent }: { responseContent: string
                                         </span>
                                     )}
                                 </div>
+                                <CopyChunkButton getData={() =>
+                                    event.summary
+                                        ? event.summary
+                                        : JSON.stringify(event.detail, null, 2)
+                                } />
                             </div>
 
                             {event.type === "text" && event.summary && (
