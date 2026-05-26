@@ -94,9 +94,13 @@ function parseUserMessage(value: unknown): UserModelMessage {
 function parseAssistantMessage(
     value: unknown,
 ): AssistantModelMessage | undefined {
-    const parsed = typeof value === "object" && value !== null
-        ? (value as AssistantModelMessage)
-        : parseJson<AssistantModelMessage | null>(value as string | null, null);
+    const parsed =
+        typeof value === "object" && value !== null
+            ? (value as AssistantModelMessage)
+            : parseJson<AssistantModelMessage | null>(
+                  value as string | null,
+                  null,
+              );
     if (!parsed) return undefined;
     if (!Array.isArray(parsed.content)) {
         parsed.content = [];
@@ -141,7 +145,7 @@ function rowToContextNode(row: EvaluationContextRow): ContextNode {
  */
 async function resolveContext(
     row: EvaluationContextRow,
-    allContexts: Map<string, EvaluationContextRow>
+    allContexts: Map<string, EvaluationContextRow>,
 ): Promise<{
     resolvedEnvironment: Environment;
     resolvedHeaders: Record<string, string>;
@@ -169,7 +173,7 @@ async function buildContextTree(
     rootRow: EvaluationContextRow,
     allContexts: EvaluationContextRow[],
     allCases: EvaluationCase[],
-    resultsByCase: Map<string, RunSummary>
+    resultsByCase: Map<string, RunSummary>,
 ): Promise<EvaluationContext> {
     // 创建 Context Map 用于快速查找
     const contextMap = new Map<string, EvaluationContextRow>();
@@ -180,14 +184,14 @@ async function buildContextTree(
 
     // 查找子节点
     const children = allContexts.filter(
-        (ctx) => ctx.parentContextId === rootRow.id
+        (ctx) => ctx.parentContextId === rootRow.id,
     );
 
     // 递归构建子树
     const childTrees = await Promise.all(
         children.map((child) =>
-            buildContextTree(child, allContexts, allCases, resultsByCase)
-        )
+            buildContextTree(child, allContexts, allCases, resultsByCase),
+        ),
     );
 
     // 获取当前 Context 的 cases（所有 Context 都可以有 cases）
@@ -208,10 +212,7 @@ async function buildContextTree(
 
         environment: parseJson<Environment>(rootRow.environmentJson, {}),
         headers: parseJson<Record<string, string>>(rootRow.headersJson, {}),
-        recentMessages: parseJson<Message[]>(
-            rootRow.recentMessagesJson,
-            []
-        ),
+        recentMessages: parseJson<Message[]>(rootRow.recentMessagesJson, []),
         contextSummary: rootRow.contextSummary ?? undefined,
 
         resolvedEnvironment: resolved.resolvedEnvironment,
@@ -248,13 +249,19 @@ export async function fetchEvaluationTree(): Promise<EvaluationTree> {
     const allContexts = await db
         .select()
         .from(evaluationContexts)
-        .orderBy(asc(evaluationContexts.depth), asc(evaluationContexts.createdAt));
+        .orderBy(
+            asc(evaluationContexts.depth),
+            asc(evaluationContexts.createdAt),
+        );
 
     // 3. 获取所有 cases
     const caseRows = await db
         .select()
         .from(evaluationCases)
-        .orderBy(asc(evaluationCases.orderIndex), asc(evaluationCases.createdAt));
+        .orderBy(
+            asc(evaluationCases.orderIndex),
+            asc(evaluationCases.createdAt),
+        );
 
     const allCases: EvaluationCase[] = caseRows.map((row) => ({
         id: row.id,
@@ -279,7 +286,10 @@ export async function fetchEvaluationTree(): Promise<EvaluationTree> {
                 .select()
                 .from(evaluationResults)
                 .where(inArray(evaluationResults.caseId, batchIds))
-                .orderBy(desc(evaluationResults.startedAt), desc(evaluationResults.createdAt));
+                .orderBy(
+                    desc(evaluationResults.startedAt),
+                    desc(evaluationResults.createdAt),
+                );
             allResultRows.push(...batchResults);
         }
     }
@@ -302,17 +312,23 @@ export async function fetchEvaluationTree(): Promise<EvaluationTree> {
         versionRows.map(async (versionRow) => {
             // 找到该 version 的根 contexts
             const rootContexts = allContexts.filter(
-                (ctx) => ctx.parentContextId === null
+                (ctx) => ctx.parentContextId === null,
             );
 
             // 获取该 version 的结果
-            const resultsByCase = resultsByVersion.get(versionRow.id) || new Map();
+            const resultsByCase =
+                resultsByVersion.get(versionRow.id) || new Map();
 
             // 为每个根构建子树
             const rootTrees = await Promise.all(
                 rootContexts.map((root) =>
-                    buildContextTree(root, allContexts, allCases, resultsByCase)
-                )
+                    buildContextTree(
+                        root,
+                        allContexts,
+                        allCases,
+                        resultsByCase,
+                    ),
+                ),
             );
 
             return {
@@ -325,7 +341,7 @@ export async function fetchEvaluationTree(): Promise<EvaluationTree> {
                 updatedAt: toIso(versionRow.updatedAt),
                 rootContexts: rootTrees,
             } satisfies EvaluationVersion;
-        })
+        }),
     );
 
     return tree;
@@ -346,7 +362,7 @@ export async function createEvaluationVersion(input?: {
     let label = input?.label;
     if (!label) {
         const now = new Date();
-        const dateStr = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')}`;
+        const dateStr = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")}`;
         const baseLabel = `V${dateStr}`;
 
         // 查询当天已有的 versions，找出最大的序号
@@ -361,11 +377,11 @@ export async function createEvaluationVersion(input?: {
             label = baseLabel;
         } else {
             // 查询所有以 baseLabel 开头的 versions，找出最大序号
-            const allVersions = await db
-                .select()
-                .from(evaluationVersions);
+            const allVersions = await db.select().from(evaluationVersions);
 
-            const pattern = new RegExp(`^${baseLabel.replace(/\//g, '\\/')}(?:\\((\\d+)\\))?$`);
+            const pattern = new RegExp(
+                `^${baseLabel.replace(/\//g, "\\/")}(?:\\((\\d+)\\))?$`,
+            );
             let maxNumber = 1; // 第一个已存在，所以从 1 开始
 
             for (const version of allVersions) {
@@ -396,7 +412,7 @@ export async function updateEvaluationVersion(
     id: string,
     updates: Partial<
         Pick<EvaluationVersion, "label" | "notes" | "agentBaseUrl" | "mode">
-    >
+    >,
 ): Promise<void> {
     const db = await getDb();
     const payload: Record<string, unknown> = {
@@ -490,7 +506,7 @@ export async function createChildContext(
         environment?: Environment;
         headers?: Record<string, string>;
         recentMessages?: Message[];
-    }
+    },
 ): Promise<string> {
     const db = await getDb();
 
@@ -509,7 +525,7 @@ export async function createChildContext(
     const validation = canCreateChild(
         { depth: parent.depth, childCount: parent.childCount },
         10, // MAX_DEPTH
-        50  // MAX_CHILDREN
+        50, // MAX_CHILDREN
     );
 
     if (!validation.canCreate) {
@@ -526,32 +542,45 @@ export async function createChildContext(
     const parentResolved = await resolveContext(parent, contextMap);
 
     // 从父节点的 resolved 配置完整拷贝（深拷贝）
-    const parentEnvironment = JSON.parse(JSON.stringify(parentResolved.resolvedEnvironment));
-    const parentHeaders = JSON.parse(JSON.stringify(parentResolved.resolvedHeaders));
+    const parentEnvironment = JSON.parse(
+        JSON.stringify(parentResolved.resolvedEnvironment),
+    );
+    const parentHeaders = JSON.parse(
+        JSON.stringify(parentResolved.resolvedHeaders),
+    );
 
     // 如果 input 提供了 environment 或 headers，则覆盖父节点的配置
-    const childEnvironment = input.environment !== undefined
-        ? { ...parentEnvironment, ...input.environment }
-        : parentEnvironment;
-    const childHeaders = input.headers !== undefined
-        ? { ...parentHeaders, ...input.headers }
-        : parentHeaders;
+    const childEnvironment =
+        input.environment !== undefined
+            ? { ...parentEnvironment, ...input.environment }
+            : parentEnvironment;
+    const childHeaders =
+        input.headers !== undefined
+            ? { ...parentHeaders, ...input.headers }
+            : parentHeaders;
 
     // 计算完整的 resolvedMessages（父节点的 + 新增的）
     const fullMessages = [
         ...parentResolved.resolvedMessages,
-        ...(input.recentMessages ?? [])
+        ...(input.recentMessages ?? []),
     ];
 
     // 生成 AI 总结（异步但不阻塞）
     let contextSummary: string | null = null;
     if (input.recentMessages && input.recentMessages.length > 0) {
-        console.log(`[Repository] Generating AI summary for new context with ${fullMessages.length} total messages...`);
+        console.log(
+            `[Repository] Generating AI summary for new context with ${fullMessages.length} total messages...`,
+        );
         try {
             contextSummary = await generateContextSummary(fullMessages);
-            console.log(`[Repository] AI summary generated successfully: ${contextSummary ? contextSummary.substring(0, 50) + "..." : "(empty)"}`);
+            console.log(
+                `[Repository] AI summary generated successfully: ${contextSummary ? contextSummary.substring(0, 50) + "..." : "(empty)"}`,
+            );
         } catch (error) {
-            console.error("[Repository] Failed to generate context summary:", error);
+            console.error(
+                "[Repository] Failed to generate context summary:",
+                error,
+            );
             // 继续创建 context，即使总结失败
         }
     }
@@ -589,7 +618,7 @@ export async function updateEvaluationContext(
         environment: Environment;
         headers: Record<string, string>;
         contextSummary: string;
-    }>
+    }>,
 ): Promise<void> {
     const db = await getDb();
     const payload: Record<string, unknown> = {
@@ -787,7 +816,7 @@ export async function saveEvaluationResult(input: {
         caseId: input.caseId,
         runId: crypto.randomUUID(), // 单个 case 运行，生成独立的 runId
         status: input.status,
-        requestPayload: "{}",  // 前端已经有 case 的 userMessage，这里不重复存储
+        requestPayload: "{}", // 前端已经有 case 的 userMessage，这里不重复存储
         responseJson: compressedResponse, // 存储压缩后的 base64 字符串
         resultOverview: input.resultOverview ?? null,
         score: input.score ?? null,
@@ -826,7 +855,10 @@ export async function getEvaluationResult(input: {
                 eq(evaluationResults.caseId, input.caseId),
             ),
         )
-        .orderBy(desc(evaluationResults.startedAt), desc(evaluationResults.createdAt))
+        .orderBy(
+            desc(evaluationResults.startedAt),
+            desc(evaluationResults.createdAt),
+        )
         .limit(1);
 
     if (results.length === 0) {
@@ -841,7 +873,10 @@ export async function getEvaluationResult(input: {
         try {
             responseContent = decompressText(responseContent);
         } catch (error) {
-            console.error("[GetResult] Failed to decompress responseContent:", error);
+            console.error(
+                "[GetResult] Failed to decompress responseContent:",
+                error,
+            );
             // 如果解压失败，返回原始数据
         }
     }
@@ -861,10 +896,12 @@ export async function getEvaluationResult(input: {
  */
 function collectContextIdsRecursively(
     contextId: string,
-    allContexts: EvaluationContextRow[]
+    allContexts: EvaluationContextRow[],
 ): string[] {
     const result = [contextId];
-    const children = allContexts.filter(ctx => ctx.parentContextId === contextId);
+    const children = allContexts.filter(
+        (ctx) => ctx.parentContextId === contextId,
+    );
 
     for (const child of children) {
         result.push(...collectContextIdsRecursively(child.id, allContexts));
@@ -891,8 +928,11 @@ export async function queueEvaluationRun(
     if (payload.contextIds?.length) {
         const expandedIds = new Set<string>();
         for (const contextId of payload.contextIds) {
-            const idsWithChildren = collectContextIdsRecursively(contextId, contexts);
-            idsWithChildren.forEach(id => expandedIds.add(id));
+            const idsWithChildren = collectContextIdsRecursively(
+                contextId,
+                contexts,
+            );
+            idsWithChildren.forEach((id) => expandedIds.add(id));
         }
         allContextIds = Array.from(expandedIds);
     } else {
@@ -901,7 +941,7 @@ export async function queueEvaluationRun(
     }
 
     // 分批查询cases（避免D1参数限制）
-    let cases: typeof evaluationCases.$inferSelect[] = [];
+    let cases: (typeof evaluationCases.$inferSelect)[] = [];
     if (allContextIds.length > 0) {
         const BATCH_SIZE = 50;
         for (let i = 0; i < allContextIds.length; i += BATCH_SIZE) {
@@ -1007,7 +1047,7 @@ export async function queueEvaluationRun(
 export async function createChildContextFromCaseResult(
     parentContextId: string,
     newMessages: Message[],
-    caseTitle?: string
+    caseTitle?: string,
 ): Promise<string> {
     const timestamp = new Date().toLocaleString("zh-CN", {
         month: "2-digit",

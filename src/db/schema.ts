@@ -34,7 +34,7 @@ export const evaluationContexts = sqliteTable(
         // 树状结构
         parentContextId: text("parent_context_id").references(
             (): any => evaluationContexts.id,
-            { onDelete: "cascade" }
+            { onDelete: "cascade" },
         ),
         depth: integer("depth").notNull().default(0),
         childCount: integer("child_count").notNull().default(0),
@@ -42,7 +42,9 @@ export const evaluationContexts = sqliteTable(
         // 配置（增量存储）
         environmentJson: text("environment_json").notNull().default("{}"),
         headersJson: text("headers_json").notNull().default("{}"),
-        recentMessagesJson: text("recent_messages_json").notNull().default("[]"),
+        recentMessagesJson: text("recent_messages_json")
+            .notNull()
+            .default("[]"),
         contextSummary: text("context_summary"),
 
         createdAt: integer("created_at", { mode: "timestamp_ms" })
@@ -54,10 +56,10 @@ export const evaluationContexts = sqliteTable(
     },
     (table) => ({
         parentContextIdIdx: index("evaluation_contexts_parent_idx").on(
-            table.parentContextId
+            table.parentContextId,
         ),
         depthIdx: index("evaluation_contexts_depth_idx").on(table.depth),
-    })
+    }),
 );
 
 export const evaluationCases = sqliteTable("evaluation_cases", {

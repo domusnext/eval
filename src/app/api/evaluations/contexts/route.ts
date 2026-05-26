@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createEvaluationContext } from "@/lib/evaluations/repository";
-import { loadDefaultEnvironment } from "@/lib/evaluations/config-loader";
 
 export async function POST(request: NextRequest) {
     try {
@@ -18,14 +17,9 @@ export async function POST(request: NextRequest) {
             description?: string | null;
         };
 
-        // 加载默认配置
-        const defaults = await loadDefaultEnvironment();
-
         const id = await createEvaluationContext({
             name: body?.name,
             description: body?.description ?? undefined,
-            environment: defaults.environment,
-            headers: defaults.headers,
         });
 
         return NextResponse.json({ data: { id } }, { status: 201 });

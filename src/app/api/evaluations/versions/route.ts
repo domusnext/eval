@@ -12,11 +12,11 @@ export async function POST(request: NextRequest) {
         } = {};
         if (request.headers.get("content-type")?.includes("application/json")) {
             const body = (await request.json().catch(() => ({}))) as {
-            label?: string;
-            notes?: string | null;
-            agentBaseUrl?: string | null;
-            mode?: string | null;
-        };
+                label?: string;
+                notes?: string | null;
+                agentBaseUrl?: string | null;
+                mode?: string | null;
+            };
             payload = {
                 label: body?.label,
                 notes: body?.notes ?? undefined,

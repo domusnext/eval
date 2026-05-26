@@ -51,6 +51,7 @@ import {
 import { ContextTreeNode } from "./context-tree-node";
 import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
 import type {
+    Environment,
     EvaluationCase,
     EvaluationContext,
     EvaluationVersion,
@@ -120,7 +121,8 @@ const statusLabelMap: Record<StatusBadge, string> = {
 
 const cloneData = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 
-const DEFAULT_EVAL_RULE = "Evaluate whether the AI agent's response is reasonable, complete, and accurate. Consider: 1) Does it address the user's request? 2) Is the information accurate? 3) Is the response well-structured and clear?";
+const DEFAULT_EVAL_RULE =
+    "Evaluate whether the AI agent's response is reasonable, complete, and accurate. Consider: 1) Does it address the user's request? 2) Is the information accurate? 3) Is the response well-structured and clear?";
 
 // Request notification permission if not already granted
 const requestNotificationPermission = async () => {
@@ -141,7 +143,11 @@ const requestNotificationPermission = async () => {
 };
 
 // Show desktop notification
-const showNotification = (title: string, body: string, onClick?: () => void) => {
+const showNotification = (
+    title: string,
+    body: string,
+    onClick?: () => void,
+) => {
     if (typeof window === "undefined" || !("Notification" in window)) {
         return;
     }
@@ -226,9 +232,7 @@ type ScoreStats = {
  * 递归计算 Context 的得分统计
  * 计分逻辑：整体平均 = (所有子context得分总和 + 所有直属case得分总和) / (子context数 + case数)
  */
-const calculateContextScore = (
-    context: EvaluationContext
-): ScoreStats => {
+const calculateContextScore = (context: EvaluationContext): ScoreStats => {
     let totalItems = 0;
     let scoredItems = 0;
     let scoreSum = 0;
@@ -278,9 +282,7 @@ const calculateContextScore = (
 /**
  * 计算 Version 的总体得分统计
  */
-const calculateVersionScore = (
-    version: EvaluationVersion
-): ScoreStats => {
+const calculateVersionScore = (version: EvaluationVersion): ScoreStats => {
     let totalItems = 0;
     let scoredItems = 0;
     let scoreSum = 0;
@@ -324,11 +326,9 @@ const formatPassRate = (passCount: number, totalCount: number): string => {
 };
 
 const buildAgentRequestBody = (
-    environment: EvaluationContext["environment"],
+    environment: Environment | undefined,
     resolvedMessages: EvaluationContext["resolvedMessages"],
     userMessage: EvaluationCase["userMessage"],
-    headers: EvaluationContext["headers"],
-    traceId: string,
 ): Record<string, unknown> => {
     const agentMessage = createAgentRecentMessage(userMessage);
     if (!agentMessage) {
@@ -337,6 +337,25 @@ const buildAgentRequestBody = (
 
     // 使用当前 Context 的完整 environment（已经包含了从父节点拷贝的所有配置）
     const envData = cloneData(environment ?? {}) as Record<string, unknown>;
+    const chatInfo =
+        envData.chat_info && typeof envData.chat_info === "object"
+            ? (envData.chat_info as Record<string, unknown>)
+            : {};
+    envData.chat_info = {
+        conversation_id:
+            typeof chatInfo.conversation_id === "string"
+                ? chatInfo.conversation_id
+                : "",
+        turn_id: typeof chatInfo.turn_id === "string" ? chatInfo.turn_id : "",
+        user_ui_message_id:
+            typeof chatInfo.user_ui_message_id === "string"
+                ? chatInfo.user_ui_message_id
+                : "",
+        assistant_ui_message_id:
+            typeof chatInfo.assistant_ui_message_id === "string"
+                ? chatInfo.assistant_ui_message_id
+                : "",
+    };
 
     // 从 envData 中移除 recent_messages，因为要单独处理
     delete envData["recent_messages"];
@@ -346,7 +365,10 @@ const buildAgentRequestBody = (
     // recent_messages: 使用 resolvedMessages（递归合并的完整消息历史）
     const payload: Record<string, unknown> = {
         environment: envData,
-        recent_messages: [...cloneData(resolvedMessages as unknown[]), agentMessage],
+        recent_messages: [
+            ...cloneData(resolvedMessages as unknown[]),
+            agentMessage,
+        ],
     };
 
     return payload;
@@ -360,7 +382,7 @@ const buildVoiceAgentRequestBody = (
     // { messages: [{role, content?, tool_calls?, tool_call_id?}] }
     const messages: Array<Record<string, unknown>> = [];
 
-    for (const msg of (resolvedMessages ?? [])) {
+    for (const msg of resolvedMessages ?? []) {
         const role = msg.role;
         const contentParts = Array.isArray(msg.content) ? msg.content : [];
 
@@ -379,10 +401,22 @@ const buildVoiceAgentRequestBody = (
         } else if (role === "assistant") {
             // Assistant message: 提取文本 + tool_calls
             let text = "";
-            const toolCalls: Array<{ id: string; type: string; function: { name: string; arguments: string } }> = [];
+            const toolCalls: Array<{
+                id: string;
+                type: string;
+                function: { name: string; arguments: string };
+            }> = [];
 
             for (const part of contentParts) {
-                const typed = part as { type?: string; text?: string; tool_call?: { id: string; name: string; arguments: unknown } };
+                const typed = part as {
+                    type?: string;
+                    text?: string;
+                    tool_call?: {
+                        id: string;
+                        name: string;
+                        arguments: unknown;
+                    };
+                };
                 if (typed.type === "text" && typed.text) {
                     text += typed.text;
                 } else if (typed.type === "tool_call" && typed.tool_call) {
@@ -391,9 +425,10 @@ const buildVoiceAgentRequestBody = (
                         type: "function",
                         function: {
                             name: typed.tool_call.name,
-                            arguments: typeof typed.tool_call.arguments === "string"
-                                ? typed.tool_call.arguments
-                                : JSON.stringify(typed.tool_call.arguments),
+                            arguments:
+                                typeof typed.tool_call.arguments === "string"
+                                    ? typed.tool_call.arguments
+                                    : JSON.stringify(typed.tool_call.arguments),
                         },
                     });
                 }
@@ -406,7 +441,10 @@ const buildVoiceAgentRequestBody = (
         } else if (role === "tool") {
             // Tool message: 提取 tool_result
             for (const part of contentParts) {
-                const typed = part as { type?: string; tool_result?: { tool_call_id: string; content: string } };
+                const typed = part as {
+                    type?: string;
+                    tool_result?: { tool_call_id: string; content: string };
+                };
                 if (typed.type === "tool_result" && typed.tool_result) {
                     messages.push({
                         role: "tool",
@@ -419,12 +457,13 @@ const buildVoiceAgentRequestBody = (
     }
 
     // 添加当前 userMessage
-    const userContent = typeof userMessage.content === "string"
-        ? userMessage.content
-        : (userMessage.content ?? [])
-            .filter((p: any) => p.type === "text")
-            .map((p: any) => p.text)
-            .join("");
+    const userContent =
+        typeof userMessage.content === "string"
+            ? userMessage.content
+            : (userMessage.content ?? [])
+                  .filter((p: any) => p.type === "text")
+                  .map((p: any) => p.text)
+                  .join("");
 
     if (userContent) {
         messages.push({ role: "user", content: userContent });
@@ -434,7 +473,7 @@ const buildVoiceAgentRequestBody = (
 };
 
 const buildAgentRequestHeaders = (
-    headers: EvaluationContext["headers"],
+    headers: Record<string, string> | undefined,
     traceId: string,
 ): Record<string, string> => {
     const merged: Record<string, string> = {
@@ -445,11 +484,90 @@ const buildAgentRequestHeaders = (
             merged[key] = value;
         }
     }
-    merged[TRACE_ID_HEADER] = traceId;
-    return merged;
+    const withUserId = ensureAgentUserIdHeader(merged);
+    withUserId[TRACE_ID_HEADER] = traceId;
+    return withUserId;
 };
 
 const RUN_CONFIG_STORAGE_KEY = "evaluation-run-config-v2";
+const AGENT_ENVIRONMENT_STORAGE_PREFIX = "agent-version-environment";
+const AGENT_HEADERS_STORAGE_PREFIX = "agent-version-headers";
+
+const getAgentEnvironmentStorageKey = (versionId: string) =>
+    `${AGENT_ENVIRONMENT_STORAGE_PREFIX}:${versionId}`;
+
+const getAgentHeadersStorageKey = (versionId: string) =>
+    `${AGENT_HEADERS_STORAGE_PREFIX}:${versionId}`;
+
+const readLocalJson = <T,>(key: string, fallback: T): T => {
+    if (typeof window === "undefined") return fallback;
+    try {
+        const raw = window.localStorage.getItem(key);
+        return raw ? (JSON.parse(raw) as T) : fallback;
+    } catch {
+        return fallback;
+    }
+};
+
+const writeLocalJson = (key: string, value: unknown) => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(key, JSON.stringify(value));
+};
+
+const getHeaderValue = (headers: Record<string, string>, name: string) => {
+    const lowerName = name.toLowerCase();
+    const entry = Object.entries(headers).find(
+        ([key]) => key.toLowerCase() === lowerName,
+    );
+    return entry?.[1] ?? "";
+};
+
+const normalizeAuthHeader = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    return trimmed.startsWith("Bearer ") ? trimmed : `Bearer ${trimmed}`;
+};
+
+const decodeJwtSubject = (authorization: string) => {
+    const token = authorization.replace(/^Bearer\s+/i, "").trim();
+    const payload = token.split(".")[1];
+    if (!payload) return "";
+
+    try {
+        const normalized = payload
+            .replace(/-/g, "+")
+            .replace(/_/g, "/")
+            .padEnd(Math.ceil(payload.length / 4) * 4, "=");
+        const decoded = JSON.parse(atob(normalized)) as { sub?: unknown };
+        return typeof decoded.sub === "string" ? decoded.sub : "";
+    } catch {
+        return "";
+    }
+};
+
+const ensureAgentUserIdHeader = (headers: Record<string, string>) => {
+    if (getHeaderValue(headers, "X-User-ID")) return headers;
+    const authorization = getHeaderValue(headers, "Authorization");
+    const userId = authorization ? decodeJwtSubject(authorization) : "";
+    if (!userId) return headers;
+    return {
+        ...headers,
+        "X-User-ID": userId,
+    };
+};
+
+const buildAgentHeadersFromFields = (
+    auth: string,
+    familyId: string,
+    timezone: string,
+) => {
+    const headers: Record<string, string> = {};
+    const authorization = normalizeAuthHeader(auth);
+    if (authorization) headers.Authorization = authorization;
+    if (familyId.trim()) headers["X-Family-ID"] = familyId.trim();
+    if (timezone.trim()) headers["X-Timezone"] = timezone.trim();
+    return ensureAgentUserIdHeader(headers);
+};
 
 interface EvaluationWorkspaceProps {
     initialVersions: EvaluationVersion[];
@@ -468,7 +586,10 @@ export function EvaluationWorkspace({
     );
     const [selectedNode, setSelectedNode] = useState<SelectedNode>(() =>
         initialVersions[0]?.rootContexts?.[0]
-            ? { type: "context", contextId: initialVersions[0].rootContexts[0].id }
+            ? {
+                  type: "context",
+                  contextId: initialVersions[0].rootContexts[0].id,
+              }
             : { type: "version" },
     );
     const [checkedContextIds, setCheckedContextIds] = useState<Set<string>>(
@@ -541,7 +662,10 @@ export function EvaluationWorkspace({
     );
 
     const withMutation = useCallback(
-        async <T,>(key: string, fn: () => Promise<T>): Promise<T | undefined> => {
+        async <T,>(
+            key: string,
+            fn: () => Promise<T>,
+        ): Promise<T | undefined> => {
             if (mutatingKeysRef.current.has(key)) return undefined;
             mutatingKeysRef.current.add(key);
             setMutatingKeys(new Set(mutatingKeysRef.current));
@@ -627,9 +751,8 @@ export function EvaluationWorkspace({
                                 : context.cases;
 
                         // Recursively update children
-                        const updatedChildren = context.children.map(
-                            updateContextTree,
-                        );
+                        const updatedChildren =
+                            context.children.map(updateContextTree);
 
                         return {
                             ...context,
@@ -640,7 +763,8 @@ export function EvaluationWorkspace({
 
                     return {
                         ...version,
-                        rootContexts: version.rootContexts.map(updateContextTree),
+                        rootContexts:
+                            version.rootContexts.map(updateContextTree),
                     };
                 }),
             );
@@ -865,7 +989,7 @@ export function EvaluationWorkspace({
 
                 // 找到当前case所在的context
                 const findContextWithCase = (
-                    contexts: EvaluationContext[]
+                    contexts: EvaluationContext[],
                 ): EvaluationContext | null => {
                     for (const ctx of contexts) {
                         if (ctx.id === selectedNode.contextId) {
@@ -883,20 +1007,25 @@ export function EvaluationWorkspace({
                     ? findContextWithCase(activeVersion.rootContexts)
                     : null;
 
-                if (!context || !context.cases || context.cases.length === 0) return;
+                if (!context || !context.cases || context.cases.length === 0)
+                    return;
 
                 const cases = context.cases;
-                const currentIndex = cases.findIndex((c) => c.id === selectedNode.caseId);
+                const currentIndex = cases.findIndex(
+                    (c) => c.id === selectedNode.caseId,
+                );
 
                 if (currentIndex === -1) return;
 
                 let newIndex: number;
                 if (e.key === "ArrowUp") {
                     // 向上切换
-                    newIndex = currentIndex <= 0 ? cases.length - 1 : currentIndex - 1;
+                    newIndex =
+                        currentIndex <= 0 ? cases.length - 1 : currentIndex - 1;
                 } else {
                     // 向下切换
-                    newIndex = currentIndex >= cases.length - 1 ? 0 : currentIndex + 1;
+                    newIndex =
+                        currentIndex >= cases.length - 1 ? 0 : currentIndex + 1;
                 }
 
                 const newCase = cases[newIndex];
@@ -910,17 +1039,19 @@ export function EvaluationWorkspace({
                     // 聚焦并精确滚动到新选中的case
                     setTimeout(() => {
                         const caseButton = document.querySelector(
-                            `[data-case-id="${newCase.id}"]`
+                            `[data-case-id="${newCase.id}"]`,
                         ) as HTMLElement;
                         if (caseButton) {
                             caseButton.focus({ preventScroll: true }); // 先聚焦但不滚动
 
                             // 检查元素是否在可视区域内
                             const rect = caseButton.getBoundingClientRect();
-                            const container = caseButton.closest('.overflow-y-auto');
+                            const container =
+                                caseButton.closest(".overflow-y-auto");
 
                             if (container) {
-                                const containerRect = container.getBoundingClientRect();
+                                const containerRect =
+                                    container.getBoundingClientRect();
 
                                 // 如果元素在视口上方，滚动刚好让它显示
                                 if (rect.top < containerRect.top) {
@@ -932,7 +1063,10 @@ export function EvaluationWorkspace({
                                 // 如果元素在视口下方，滚动刚好让它显示
                                 else if (rect.bottom > containerRect.bottom) {
                                     container.scrollBy({
-                                        top: rect.bottom - containerRect.bottom + 8, // 8px padding
+                                        top:
+                                            rect.bottom -
+                                            containerRect.bottom +
+                                            8, // 8px padding
                                         behavior: "smooth",
                                     });
                                 }
@@ -1048,21 +1182,22 @@ export function EvaluationWorkspace({
         if (mutatingKeysRef.current.has(`del-version:${versionId}`)) return;
 
         // 获取当前version以显示信息
-        const version = versionsState.find(v => v.id === versionId);
+        const version = versionsState.find((v) => v.id === versionId);
         if (!version) return;
 
         // 添加确认对话框
         const contextCount = version.rootContexts.length;
         const caseCount = version.rootContexts.reduce(
             (acc, context) => acc + (context.cases?.length || 0),
-            0
+            0,
         );
 
         let warningMessage = `Are you sure you want to delete the version "${version.label}"?`;
 
         if (contextCount > 0 || caseCount > 0) {
             warningMessage += `\n\nThis will also delete:`;
-            if (contextCount > 0) warningMessage += `\n- ${contextCount} context(s)`;
+            if (contextCount > 0)
+                warningMessage += `\n- ${contextCount} context(s)`;
             if (caseCount > 0) warningMessage += `\n- ${caseCount} case(s)`;
             warningMessage += `\n- All associated evaluation results`;
         }
@@ -1138,8 +1273,7 @@ export function EvaluationWorkspace({
                 body: JSON.stringify({
                     name: updates.name,
                     description: updates.description ?? null,
-                    environment: updates.environment,
-                    headers: updates.headers,
+                    contextSummary: updates.contextSummary ?? null,
                 }),
             });
             await refreshTree();
@@ -1178,7 +1312,8 @@ export function EvaluationWorkspace({
         if (caseCount > 0 || childCount > 0) {
             warningMessage += `\n\nThis will also delete:`;
             if (caseCount > 0) warningMessage += `\n- ${caseCount} case(s)`;
-            if (childCount > 0) warningMessage += `\n- ${childCount} child context(s) and their cases`;
+            if (childCount > 0)
+                warningMessage += `\n- ${childCount} child context(s) and their cases`;
         }
 
         warningMessage += `\n\nThis action cannot be undone.`;
@@ -1262,7 +1397,7 @@ export function EvaluationWorkspace({
 
         // 添加确认对话框
         const confirmed = window.confirm(
-            `Are you sure you want to delete the case "${testCase.title}"?\n\nThis action cannot be undone.`
+            `Are you sure you want to delete the case "${testCase.title}"?\n\nThis action cannot be undone.`,
         );
 
         if (!confirmed) {
@@ -1290,7 +1425,9 @@ export function EvaluationWorkspace({
         const targetedCases = new Map<string, CaseExecutionTarget>();
 
         // Helper: Recursively collect all contexts including children
-        const getAllContexts = (contexts: EvaluationContext[]): EvaluationContext[] => {
+        const getAllContexts = (
+            contexts: EvaluationContext[],
+        ): EvaluationContext[] => {
             const result: EvaluationContext[] = [];
             for (const ctx of contexts) {
                 result.push(ctx);
@@ -1376,7 +1513,11 @@ export function EvaluationWorkspace({
         return Array.from(targetedCases.values());
     };
 
-    const runCases = async (trigger: RunTrigger, friendlyLabel: string, source: RunSource) => {
+    const runCases = async (
+        trigger: RunTrigger,
+        friendlyLabel: string,
+        source: RunSource,
+    ) => {
         // If already running, abort the current run
         if (isRunning && abortControllerRef.current) {
             abortControllerRef.current.abort();
@@ -1411,9 +1552,24 @@ export function EvaluationWorkspace({
         try {
             const versionId = activeVersion.id;
             const versionMode: VersionMode = activeVersion.mode ?? "agent";
-            const agentEndpoint = versionMode === "voice-agent"
-                ? normalizeAgentBaseUrl(activeVersion.agentBaseUrl)
-                : `${normalizeAgentBaseUrl(activeVersion.agentBaseUrl)}${AGENT_STREAM_PATH}`;
+            const agentEnvironment =
+                versionMode === "agent"
+                    ? readLocalJson<Environment>(
+                          getAgentEnvironmentStorageKey(versionId),
+                          {},
+                      )
+                    : {};
+            const agentHeaders =
+                versionMode === "agent"
+                    ? readLocalJson<Record<string, string>>(
+                          getAgentHeadersStorageKey(versionId),
+                          {},
+                      )
+                    : {};
+            const agentEndpoint =
+                versionMode === "voice-agent"
+                    ? normalizeAgentBaseUrl(activeVersion.agentBaseUrl)
+                    : `${normalizeAgentBaseUrl(activeVersion.agentBaseUrl)}${AGENT_STREAM_PATH}`;
 
             const casesToRun = targets;
 
@@ -1452,15 +1608,21 @@ export function EvaluationWorkspace({
 
                 try {
                     const headers = buildAgentRequestHeaders(
-                        context.headers,
+                        versionMode === "agent" ? agentHeaders : {},
                         traceId,
                     );
 
                     if (versionMode === "voice-agent") {
-                        const token = localStorage.getItem(`voice-agent-token:${activeVersion.id}`);
+                        const token = localStorage.getItem(
+                            `voice-agent-token:${activeVersion.id}`,
+                        );
                         if (token) {
                             // 支持用户填入 "Bearer xxx" 或直接填 "xxx"
-                            headers["Authorization"] = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+                            headers["Authorization"] = token.startsWith(
+                                "Bearer ",
+                            )
+                                ? token
+                                : `Bearer ${token}`;
                         }
                     }
 
@@ -1472,11 +1634,9 @@ export function EvaluationWorkspace({
                         );
                     } else {
                         requestBody = buildAgentRequestBody(
-                            context.environment,
+                            agentEnvironment,
                             context.resolvedMessages,
                             testCase.userMessage,
-                            context.headers,
-                            traceId,
                         );
                     }
 
@@ -1484,16 +1644,21 @@ export function EvaluationWorkspace({
                     try {
                         if (versionMode === "voice-agent") {
                             // Voice Agent: 通过服务端代理避免 CORS
-                            response = await fetch("/api/evaluations/run/voice-agent", {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({
-                                    targetUrl: agentEndpoint,
-                                    headers,
-                                    body: requestBody,
-                                }),
-                                signal: abortController.signal,
-                            });
+                            response = await fetch(
+                                "/api/evaluations/run/voice-agent",
+                                {
+                                    method: "POST",
+                                    headers: {
+                                        "Content-Type": "application/json",
+                                    },
+                                    body: JSON.stringify({
+                                        targetUrl: agentEndpoint,
+                                        headers,
+                                        body: requestBody,
+                                    }),
+                                    signal: abortController.signal,
+                                },
+                            );
                         } else {
                             response = await fetch(agentEndpoint, {
                                 method: "POST",
@@ -1504,7 +1669,10 @@ export function EvaluationWorkspace({
                         }
                     } catch (fetchError) {
                         // Check if this was an abort
-                        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+                        if (
+                            fetchError instanceof Error &&
+                            fetchError.name === "AbortError"
+                        ) {
                             throw fetchError;
                         }
                         throw new Error(
@@ -1540,9 +1708,12 @@ export function EvaluationWorkspace({
                         const decoder = new TextDecoder();
                         let done = false;
                         while (!done) {
-                            const { value, done: readerDone } = await reader.read();
+                            const { value, done: readerDone } =
+                                await reader.read();
                             if (value) {
-                                const chunk = decoder.decode(value, { stream: !readerDone });
+                                const chunk = decoder.decode(value, {
+                                    stream: !readerDone,
+                                });
                                 responseContent += chunk;
                             }
                             done = readerDone;
@@ -1553,7 +1724,9 @@ export function EvaluationWorkspace({
 
                     // ========== 前端诊断：分析响应 ==========
                     if (versionMode !== "voice-agent") {
-                        console.log(`[Case Execution Debug] Analyzing responseContent for case: ${testCase.title}`);
+                        console.log(
+                            `[Case Execution Debug] Analyzing responseContent for case: ${testCase.title}`,
+                        );
                         const lines = responseContent.split("\n");
                         const eventTypes = new Map<string, number>();
                         let toolCallEvents = 0;
@@ -1562,28 +1735,46 @@ export function EvaluationWorkspace({
                         for (const line of lines) {
                             if (line.startsWith("data: ")) {
                                 try {
-                                    const event = JSON.parse(line.substring(6)) as any;
+                                    const event = JSON.parse(
+                                        line.substring(6),
+                                    ) as any;
                                     const type = event.type || "unknown";
-                                    eventTypes.set(type, (eventTypes.get(type) || 0) + 1);
+                                    eventTypes.set(
+                                        type,
+                                        (eventTypes.get(type) || 0) + 1,
+                                    );
 
                                     if (type.toLowerCase().includes("tool")) {
-                                        if (type.includes("call") || type.includes("use")) {
+                                        if (
+                                            type.includes("call") ||
+                                            type.includes("use")
+                                        ) {
                                             toolCallEvents++;
-                                            console.log(`[Case Execution Debug] Tool Call Event:`, {
-                                                type,
-                                                hasToolName: !!event.toolName,
-                                                hasToolCallId: !!event.toolCallId,
-                                                hasInput: !!event.input,
-                                                toolName: event.toolName,
-                                            });
+                                            console.log(
+                                                `[Case Execution Debug] Tool Call Event:`,
+                                                {
+                                                    type,
+                                                    hasToolName:
+                                                        !!event.toolName,
+                                                    hasToolCallId:
+                                                        !!event.toolCallId,
+                                                    hasInput: !!event.input,
+                                                    toolName: event.toolName,
+                                                },
+                                            );
                                         } else if (type.includes("result")) {
                                             toolResultEvents++;
-                                            console.log(`[Case Execution Debug] Tool Result Event:`, {
-                                                type,
-                                                hasToolName: !!event.toolName,
-                                                hasToolCallId: !!event.toolCallId,
-                                                toolName: event.toolName,
-                                            });
+                                            console.log(
+                                                `[Case Execution Debug] Tool Result Event:`,
+                                                {
+                                                    type,
+                                                    hasToolName:
+                                                        !!event.toolName,
+                                                    hasToolCallId:
+                                                        !!event.toolCallId,
+                                                    toolName: event.toolName,
+                                                },
+                                            );
                                         }
                                     }
                                 } catch {
@@ -1592,21 +1783,28 @@ export function EvaluationWorkspace({
                             }
                         }
 
-                        console.log("[Case Execution Debug] SSE Response Summary:", {
-                            totalLines: lines.length,
-                            uniqueEventTypes: Array.from(eventTypes.keys()),
-                            eventTypeCounts: Object.fromEntries(eventTypes),
-                            toolCallEvents,
-                            toolResultEvents,
-                        });
+                        console.log(
+                            "[Case Execution Debug] SSE Response Summary:",
+                            {
+                                totalLines: lines.length,
+                                uniqueEventTypes: Array.from(eventTypes.keys()),
+                                eventTypeCounts: Object.fromEntries(eventTypes),
+                                toolCallEvents,
+                                toolResultEvents,
+                            },
+                        );
 
                         if (toolCallEvents === 0 && toolResultEvents > 0) {
-                            console.warn("[Case Execution Debug] ISSUE DETECTED: No tool-call events but tool-result events exist!");
+                            console.warn(
+                                "[Case Execution Debug] ISSUE DETECTED: No tool-call events but tool-result events exist!",
+                            );
                         }
                     }
                     // ========== 诊断结束 ==========
 
-                    const durationMs = Math.round(performance.now() - startedAt);
+                    const durationMs = Math.round(
+                        performance.now() - startedAt,
+                    );
                     const completedAt = new Date().toISOString();
 
                     successCount += 1;
@@ -1636,39 +1834,56 @@ export function EvaluationWorkspace({
                             }),
                         });
                         savedSuccessfully = true;
-                        console.log(`✅ [SaveResult] Case ${testCase.id} result saved successfully`);
+                        console.log(
+                            `✅ [SaveResult] Case ${testCase.id} result saved successfully`,
+                        );
                     } catch (saveError) {
-                        console.error("❌ [SaveResult] Failed to save result:", saveError);
+                        console.error(
+                            "❌ [SaveResult] Failed to save result:",
+                            saveError,
+                        );
 
                         // 保存失败：保留 responseContent 以便前端仍能展示
-                        updateCaseRunSummary(versionId, context.id, testCase.id, {
-                            status: "succeeded",
-                            durationMs,
-                            completedAt,
-                            responseContent,
-                        });
+                        updateCaseRunSummary(
+                            versionId,
+                            context.id,
+                            testCase.id,
+                            {
+                                status: "succeeded",
+                                durationMs,
+                                completedAt,
+                                responseContent,
+                            },
+                        );
 
                         // 计算响应大小并显示警告
-                        const responseSizeKB = Math.round(responseContent.length / 1024);
-                        const errorMsg = saveError instanceof Error ? saveError.message : String(saveError);
+                        const responseSizeKB = Math.round(
+                            responseContent.length / 1024,
+                        );
+                        const errorMsg =
+                            saveError instanceof Error
+                                ? saveError.message
+                                : String(saveError);
 
                         toast.error(
                             `Failed to save case result (${responseSizeKB}KB). ${errorMsg}. ` +
-                            "Evaluation skipped to maintain data consistency.",
-                            { duration: 6000 }
+                                "Evaluation skipped to maintain data consistency.",
+                            { duration: 6000 },
                         );
                     }
 
                     // 只有保存成功才执行评估
                     if (savedSuccessfully) {
-                        console.log(`[Auto-evaluate] Evaluating case ${testCase.id}...`);
+                        console.log(
+                            `[Auto-evaluate] Evaluating case ${testCase.id}...`,
+                        );
                         try {
                             const evalResponse = await apiRequest(
                                 `/api/evaluations/cases/${testCase.id}/evaluate`,
                                 {
                                     method: "POST",
                                     body: JSON.stringify({ versionId }),
-                                }
+                                },
                             );
 
                             const evalResult = evalResponse as {
@@ -1677,24 +1892,40 @@ export function EvaluationWorkspace({
                             };
 
                             // 更新前端状态显示评估结果
-                            if (evalResult.resultOverview !== undefined && evalResult.score !== undefined) {
-                                updateCaseRunSummary(versionId, context.id, testCase.id, {
-                                    status: "succeeded",
-                                    durationMs,
-                                    completedAt,
-                                    responseContent,
-                                    resultOverview: evalResult.resultOverview,
-                                    score: evalResult.score,
-                                });
-                                console.log(`[Auto-evaluate] Evaluation complete. Score: ${evalResult.score}`);
+                            if (
+                                evalResult.resultOverview !== undefined &&
+                                evalResult.score !== undefined
+                            ) {
+                                updateCaseRunSummary(
+                                    versionId,
+                                    context.id,
+                                    testCase.id,
+                                    {
+                                        status: "succeeded",
+                                        durationMs,
+                                        completedAt,
+                                        responseContent,
+                                        resultOverview:
+                                            evalResult.resultOverview,
+                                        score: evalResult.score,
+                                    },
+                                );
+                                console.log(
+                                    `[Auto-evaluate] Evaluation complete. Score: ${evalResult.score}`,
+                                );
                             }
                         } catch (evalError) {
-                            console.error(`[Auto-evaluate] Failed to evaluate case ${testCase.id}:`, evalError);
+                            console.error(
+                                `[Auto-evaluate] Failed to evaluate case ${testCase.id}:`,
+                                evalError,
+                            );
                             // 评估失败不影响主流程，只记录错误
                         }
                     }
                 } catch (error) {
-                    const durationMs = Math.round(performance.now() - startedAt);
+                    const durationMs = Math.round(
+                        performance.now() - startedAt,
+                    );
                     const completedAt = new Date().toISOString();
                     failureCount += 1;
                     const message =
@@ -1717,7 +1948,7 @@ export function EvaluationWorkspace({
                                 contextId: context.id,
                                 caseId: testCase.id,
                                 status: "failed",
-                                responseContent: "",  // 失败时没有响应内容
+                                responseContent: "", // 失败时没有响应内容
                                 latencyMs: durationMs,
                                 startedAt: new Date(startedAt).toISOString(),
                                 completedAt,
@@ -1725,7 +1956,10 @@ export function EvaluationWorkspace({
                             }),
                         });
                     } catch (saveError) {
-                        console.error("Failed to save result to database:", saveError);
+                        console.error(
+                            "Failed to save result to database:",
+                            saveError,
+                        );
                     }
 
                     console.error(
@@ -1806,8 +2040,8 @@ export function EvaluationWorkspace({
             }
         } catch (error) {
             // Check if this was an abort
-            if (error instanceof Error && error.name === 'AbortError') {
-                toast('Run stopped by user', { duration: 3000 });
+            if (error instanceof Error && error.name === "AbortError") {
+                toast("Run stopped by user", { duration: 3000 });
                 return;
             }
             if (loadingToastId) {
@@ -1830,9 +2064,9 @@ export function EvaluationWorkspace({
 
     const contextSelectionState = (context: EvaluationContext) => {
         const totalCases = context.cases?.length || 0;
-        const selectedCases = context.cases?.filter((testCase) =>
-            checkedCaseIds.has(testCase.id),
-        ).length || 0;
+        const selectedCases =
+            context.cases?.filter((testCase) => checkedCaseIds.has(testCase.id))
+                .length || 0;
         if (checkedContextIds.has(context.id)) return true;
         if (selectedCases > 0 && selectedCases < totalCases)
             return "indeterminate";
@@ -1911,7 +2145,12 @@ export function EvaluationWorkspace({
                         <Button
                             size="sm"
                             className="w-full justify-center"
-                            variant={isRunning && runningSource === "sidebar-selected" ? "destructive" : "default"}
+                            variant={
+                                isRunning &&
+                                runningSource === "sidebar-selected"
+                                    ? "destructive"
+                                    : "default"
+                            }
                             onClick={() => {
                                 if (!activeVersion) {
                                     toast.error("No version selected");
@@ -1931,11 +2170,14 @@ export function EvaluationWorkspace({
                             }}
                             disabled={
                                 !activeVersion ||
-                                (!selectedContextCount && !selectedCaseCount && !isRunning) ||
+                                (!selectedContextCount &&
+                                    !selectedCaseCount &&
+                                    !isRunning) ||
                                 (isBusy && runningSource !== "sidebar-selected")
                             }
                         >
-                            {isRunning && runningSource === "sidebar-selected" ? (
+                            {isRunning &&
+                            runningSource === "sidebar-selected" ? (
                                 <>
                                     <Square className="mr-2 size-4" />
                                     Stop
@@ -2008,17 +2250,27 @@ export function EvaluationWorkspace({
                                     <div className="inline-flex overflow-hidden rounded-md border bg-white shadow-sm">
                                         <Button
                                             size="sm"
-                                            variant={isRunning && runningSource === "header-selected" ? "destructive" : "default"}
+                                            variant={
+                                                isRunning &&
+                                                runningSource ===
+                                                    "header-selected"
+                                                    ? "destructive"
+                                                    : "default"
+                                            }
                                             className="rounded-none rounded-l-md"
                                             disabled={
-                                                (!canRunSelection && !isRunning) ||
+                                                (!canRunSelection &&
+                                                    !isRunning) ||
                                                 !activeVersion ||
-                                                (isBusy && runningSource !== "header-selected")
+                                                (isBusy &&
+                                                    runningSource !==
+                                                        "header-selected")
                                             }
                                             onClick={() => {
                                                 if (
                                                     !activeVersion ||
-                                                    (!canRunSelection && !isRunning)
+                                                    (!canRunSelection &&
+                                                        !isRunning)
                                                 ) {
                                                     return;
                                                 }
@@ -2041,7 +2293,9 @@ export function EvaluationWorkspace({
                                                 );
                                             }}
                                         >
-                                            {isRunning && runningSource === "header-selected" ? (
+                                            {isRunning &&
+                                            runningSource ===
+                                                "header-selected" ? (
                                                 <>
                                                     <Square className="mr-2 size-4" />
                                                     Stop
@@ -2178,7 +2432,7 @@ export function EvaluationWorkspace({
                                             versionId: activeVersion.id,
                                         },
                                         `version ${activeVersion.label}`,
-                                        "version"
+                                        "version",
                                     )
                                 }
                             />
@@ -2238,8 +2492,7 @@ export function EvaluationWorkspace({
                             />
                         ) : null}
 
-                        {selectedCase &&
-                        selectedContext ? (
+                        {selectedCase && selectedContext ? (
                             <CaseSummary
                                 context={selectedContext}
                                 testCase={selectedCase}
@@ -2371,7 +2624,8 @@ function RunConfigDialog({
                 <DialogHeader>
                     <DialogTitle>Run configuration</DialogTitle>
                     <DialogDescription>
-                        Configure concurrency for evaluation runs. All selected cases will be executed.
+                        Configure concurrency for evaluation runs. All selected
+                        cases will be executed.
                     </DialogDescription>
                 </DialogHeader>
                 <div className="grid gap-4">
@@ -2393,7 +2647,8 @@ function RunConfigDialog({
                         />
                         <p className="text-xs text-slate-500">
                             Maximum number of parallel requests issued to the
-                            downstream agent. Click the Run button again during execution to stop.
+                            downstream agent. Click the Run button again during
+                            execution to stop.
                         </p>
                     </div>
                 </div>
@@ -2508,7 +2763,10 @@ function VersionSummary({
                     />
                     <StatTile
                         label="Pass Rate"
-                        value={formatPassRate(scoreStats.passCount, scoreStats.scoredItems)}
+                        value={formatPassRate(
+                            scoreStats.passCount,
+                            scoreStats.scoredItems,
+                        )}
                     />
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
@@ -2518,7 +2776,11 @@ function VersionSummary({
                     />
                     <StatTile
                         label="Mode"
-                        value={version.mode === "voice-agent" ? "Voice Agent (JSON)" : "Agent (SSE)"}
+                        value={
+                            version.mode === "voice-agent"
+                                ? "Voice Agent (JSON)"
+                                : "Agent (SSE)"
+                        }
                     />
                 </div>
                 <div className="space-y-3">
@@ -2536,7 +2798,9 @@ function VersionSummary({
                                 </p>
                                 <p className="text-xs text-slate-500">
                                     {context.cases?.length || 0} case
-                                    {(context.cases?.length || 0) === 1 ? "" : "s"}
+                                    {(context.cases?.length || 0) === 1
+                                        ? ""
+                                        : "s"}
                                 </p>
                             </div>
                         ))}
@@ -2584,7 +2848,32 @@ function VersionEditDialog({
         version.agentBaseUrl ?? "",
     );
     const [mode, setMode] = useState<VersionMode>(version.mode ?? "agent");
+    const [environmentText, setEnvironmentText] = useState(
+        JSON.stringify(
+            readLocalJson<Environment>(
+                getAgentEnvironmentStorageKey(version.id),
+                {},
+            ),
+            null,
+            2,
+        ),
+    );
+    const initialAgentHeaders = readLocalJson<Record<string, string>>(
+        getAgentHeadersStorageKey(version.id),
+        {},
+    );
+    const [agentAuth, setAgentAuth] = useState(
+        getHeaderValue(initialAgentHeaders, "Authorization"),
+    );
+    const [agentFamilyId, setAgentFamilyId] = useState(
+        getHeaderValue(initialAgentHeaders, "X-Family-ID"),
+    );
+    const [agentTimezone, setAgentTimezone] = useState(
+        getHeaderValue(initialAgentHeaders, "X-Timezone"),
+    );
     const [voiceAgentToken, setVoiceAgentToken] = useState("");
+    const [isHydratingEnvironment, setIsHydratingEnvironment] =
+        useState(false);
 
     useEffect(() => {
         if (!open) return;
@@ -2592,6 +2881,23 @@ function VersionEditDialog({
         setNotes(version.notes ?? "");
         setAgentBaseUrl(version.agentBaseUrl ?? "");
         setMode(version.mode ?? "agent");
+        setEnvironmentText(
+            JSON.stringify(
+                readLocalJson<Environment>(
+                    getAgentEnvironmentStorageKey(version.id),
+                    {},
+                ),
+                null,
+                2,
+            ),
+        );
+        const storedAgentHeaders = readLocalJson<Record<string, string>>(
+            getAgentHeadersStorageKey(version.id),
+            {},
+        );
+        setAgentAuth(getHeaderValue(storedAgentHeaders, "Authorization"));
+        setAgentFamilyId(getHeaderValue(storedAgentHeaders, "X-Family-ID"));
+        setAgentTimezone(getHeaderValue(storedAgentHeaders, "X-Timezone"));
         setVoiceAgentToken(
             localStorage.getItem(`voice-agent-token:${version.id}`) ?? "",
         );
@@ -2609,10 +2915,42 @@ function VersionEditDialog({
             return;
         }
 
+        let parsedEnvironment: Record<string, unknown> = {};
+        let parsedHeaders: Record<string, string> = {};
+
+        if (mode === "agent") {
+            try {
+                parsedEnvironment =
+                    environmentText.trim().length > 0
+                        ? JSON.parse(environmentText)
+                        : {};
+            } catch {
+                toast.error("Environment JSON is invalid.");
+                return;
+            }
+
+            parsedHeaders = buildAgentHeadersFromFields(
+                agentAuth,
+                agentFamilyId,
+                agentTimezone,
+            );
+        }
+
         if (mode === "voice-agent" && voiceAgentToken) {
-            localStorage.setItem(`voice-agent-token:${version.id}`, voiceAgentToken);
+            localStorage.setItem(
+                `voice-agent-token:${version.id}`,
+                voiceAgentToken,
+            );
         } else {
             localStorage.removeItem(`voice-agent-token:${version.id}`);
+        }
+
+        if (mode === "agent") {
+            writeLocalJson(
+                getAgentEnvironmentStorageKey(version.id),
+                parsedEnvironment,
+            );
+            writeLocalJson(getAgentHeadersStorageKey(version.id), parsedHeaders);
         }
 
         await onSave({
@@ -2622,6 +2960,70 @@ function VersionEditDialog({
             mode,
         });
         onOpenChange(false);
+    };
+
+    const handleHydrateEnvironment = async () => {
+        const parsedHeaders = buildAgentHeadersFromFields(
+            agentAuth,
+            agentFamilyId,
+            agentTimezone,
+        );
+
+        if (!parsedHeaders.Authorization) {
+            toast.error("Auth is required.");
+            return;
+        }
+        if (!parsedHeaders["X-Family-ID"]) {
+            toast.error("Family ID is required.");
+            return;
+        }
+        if (!parsedHeaders["X-Timezone"]) {
+            toast.error("Timezone is required.");
+            return;
+        }
+
+        setIsHydratingEnvironment(true);
+        try {
+            const response = await fetch("/api/evaluations/agent-context", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    headers: parsedHeaders,
+                }),
+            });
+            const data = (await response
+                .json()
+                .catch(() => ({}))) as {
+                error?: string;
+                environment?: Environment;
+            };
+
+            if (!response.ok) {
+                throw new Error(
+                    data?.error ?? `Request failed with ${response.status}`,
+                );
+            }
+
+            const environment = (data?.environment ?? {}) as Environment;
+            const nextEnvironmentText = JSON.stringify(environment, null, 2);
+            setEnvironmentText(nextEnvironmentText);
+            writeLocalJson(
+                getAgentEnvironmentStorageKey(version.id),
+                environment,
+            );
+            writeLocalJson(getAgentHeadersStorageKey(version.id), parsedHeaders);
+            toast.success("Environment hydrated from auth.");
+        } catch (error) {
+            toast.error(
+                error instanceof Error
+                    ? error.message
+                    : "Failed to hydrate environment.",
+            );
+        } finally {
+            setIsHydratingEnvironment(false);
+        }
     };
 
     const handleDelete = async () => {
@@ -2656,9 +3058,11 @@ function VersionEditDialog({
                             </Label>
                             <Input
                                 id="edit-version-agent"
-                                placeholder={mode === "voice-agent"
-                                    ? "https://example.com/voice-agent-proxy/chat"
-                                    : "https://example.com/agent"}
+                                placeholder={
+                                    mode === "voice-agent"
+                                        ? "https://example.com/voice-agent-proxy/chat"
+                                        : "https://example.com/agent"
+                                }
                                 value={agentBaseUrl}
                                 onChange={(event) =>
                                     setAgentBaseUrl(event.target.value)
@@ -2676,8 +3080,12 @@ function VersionEditDialog({
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="agent">Agent (SSE Stream)</SelectItem>
-                                <SelectItem value="voice-agent">Voice Agent (JSON)</SelectItem>
+                                <SelectItem value="agent">
+                                    Agent (SSE Stream)
+                                </SelectItem>
+                                <SelectItem value="voice-agent">
+                                    Voice Agent (JSON)
+                                </SelectItem>
                             </SelectContent>
                         </Select>
                         <p className="text-xs text-slate-500">
@@ -2688,7 +3096,9 @@ function VersionEditDialog({
                     </div>
                     {mode === "voice-agent" && (
                         <div className="space-y-2">
-                            <Label htmlFor="edit-version-token">Auth Token</Label>
+                            <Label htmlFor="edit-version-token">
+                                Auth Token
+                            </Label>
                             <Input
                                 id="edit-version-token"
                                 type="text"
@@ -2699,9 +3109,96 @@ function VersionEditDialog({
                                 }
                             />
                             <p className="text-xs text-slate-500">
-                                Stored locally in browser. Sent as Authorization: Bearer header.
+                                Stored locally in browser. Sent as
+                                Authorization: Bearer header.
                             </p>
                         </div>
+                    )}
+                    {mode === "agent" && (
+                        <>
+                            <div className="space-y-2">
+                                <div className="flex items-center justify-between gap-3">
+                                    <Label htmlFor="edit-version-environment">
+                                        Environment JSON
+                                    </Label>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={handleHydrateEnvironment}
+                                        disabled={
+                                            isBusy || isHydratingEnvironment
+                                        }
+                                    >
+                                        <RefreshCw
+                                            className={cn(
+                                                "mr-2 size-4",
+                                                isHydratingEnvironment &&
+                                                    "animate-spin",
+                                            )}
+                                        />
+                                        Auto fill
+                                    </Button>
+                                </div>
+                                <Textarea
+                                    id="edit-version-environment"
+                                    rows={8}
+                                    value={environmentText}
+                                    onChange={(event) =>
+                                        setEnvironmentText(event.target.value)
+                                    }
+                                />
+                                <p className="text-xs text-slate-500">
+                                    Uses Auth, Family ID, and Timezone below to
+                                    fetch the role and environment, then stores
+                                    the result locally.
+                                </p>
+                            </div>
+                            <div className="grid gap-4 md:grid-cols-2">
+                                <div className="space-y-2 md:col-span-2">
+                                    <Label htmlFor="edit-version-agent-auth">
+                                        Auth
+                                    </Label>
+                                    <Input
+                                        id="edit-version-agent-auth"
+                                        type="text"
+                                        placeholder="Bearer token"
+                                        value={agentAuth}
+                                        onChange={(event) =>
+                                            setAgentAuth(event.target.value)
+                                        }
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="edit-version-family-id">
+                                        Family ID
+                                    </Label>
+                                    <Input
+                                        id="edit-version-family-id"
+                                        type="text"
+                                        placeholder="5edf28bf-..."
+                                        value={agentFamilyId}
+                                        onChange={(event) =>
+                                            setAgentFamilyId(event.target.value)
+                                        }
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="edit-version-timezone">
+                                        Timezone
+                                    </Label>
+                                    <Input
+                                        id="edit-version-timezone"
+                                        type="text"
+                                        placeholder="Asia/Shanghai"
+                                        value={agentTimezone}
+                                        onChange={(event) =>
+                                            setAgentTimezone(event.target.value)
+                                        }
+                                    />
+                                </div>
+                            </div>
+                        </>
                     )}
                     <div className="space-y-2">
                         <Label htmlFor="edit-version-notes">Notes</Label>
@@ -2795,14 +3292,16 @@ function ContextSummary({
                 `/api/evaluations/contexts/${context.id}/generate-summary`,
                 {
                     method: "POST",
-                }
+                },
             );
 
             if (!response.ok) {
                 const errorData = (await response.json().catch(() => ({}))) as {
                     error?: string;
                 };
-                throw new Error(errorData.error || "Failed to generate summary");
+                throw new Error(
+                    errorData.error || "Failed to generate summary",
+                );
             }
 
             const data = await response.json();
@@ -2815,7 +3314,7 @@ function ContextSummary({
             toast.error(
                 error instanceof Error
                     ? error.message
-                    : "Failed to generate summary"
+                    : "Failed to generate summary",
             );
         } finally {
             setIsGeneratingSummary(false);
@@ -2825,306 +3324,339 @@ function ContextSummary({
     return (
         <>
             <Card>
-            <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                        <CardTitle>{context.name}</CardTitle>
-                        {isChildContext && (
-                            <Badge variant="secondary">
-                                Child Context (Depth {context.depth})
-                            </Badge>
-                        )}
-                    </div>
-                    <CardDescription>
-                        {context.description ?? "No description provided."}
-                    </CardDescription>
-                    {isChildContext && (
-                        <div className="text-xs text-slate-500 mt-2">
-                            This is a child context created from a case result.
-                            It inherits configuration from its parent and stores incremental messages.
-                        </div>
-                    )}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                    <Button
-                        size="sm"
-                        variant={isRunning && runningSource === "context" ? "destructive" : "default"}
-                        disabled={isBusy && runningSource !== "context"}
-                        onClick={() => {
-                            void onRun();
-                        }}
-                    >
-                        {isRunning && runningSource === "context" ? (
-                            <>
-                                <Square className="mr-2 size-4" />
-                                Stop
-                            </>
-                        ) : (
-                            <>
-                                <Play className="mr-2 size-4" />
-                                Run context
-                            </>
-                        )}
-                    </Button>
-                    <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={isBusy}
-                        onClick={() => {
-                            void onAddCase();
-                        }}
-                    >
-                        <Plus className="mr-2 size-4" />
-                        Add case
-                    </Button>
-                    <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={isBusy}
-                        onClick={() => setBatchAddDialogOpen(true)}
-                    >
-                        <Upload className="mr-2 size-4" />
-                        Batch add cases
-                    </Button>
-                    <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={isBusy}
-                        onClick={onEdit}
-                    >
-                        <Settings2 className="mr-2 size-4" />
-                        Edit
-                    </Button>
-                    <Button
-                        size="sm"
-                        variant="destructive"
-                        disabled={isBusy}
-                        onClick={() => {
-                            void onDelete();
-                        }}
-                    >
-                        <Trash2 className="mr-2 size-4" />
-                        Delete
-                    </Button>
-                </div>
-            </CardHeader>
-            <CardContent className="space-y-6">
-                <div className="space-y-4">
-                    <div className="space-y-2">
-                        <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Environment JSON
-                        </h4>
-                        <JsonViewer value={context.environment ?? {}} />
-                    </div>
-                    <div className="space-y-2">
-                        <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Headers JSON
-                        </h4>
-                        <JsonViewer value={context.headers ?? {}} />
-                    </div>
-                    <div className="space-y-2">
-                        <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Recent Messages
-                        </h4>
-                        <JsonViewer value={context.resolvedMessages ?? []} />
-                    </div>
-                    <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                            <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                                Context Summary
-                            </h4>
-                            <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={isGeneratingSummary || isBusy}
-                                onClick={() => {
-                                    void handleGenerateSummary();
-                                }}
-                                className="h-6 px-2 text-xs"
-                            >
-                                <Sparkles className="mr-1 size-3" />
-                                {isGeneratingSummary ? "Generating..." : "Generate"}
-                            </Button>
-                        </div>
-                        <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm min-h-[100px]">
-                            {context.contextSummary ? (
-                                <MarkdownRenderer content={context.contextSummary} />
-                            ) : (
-                                <span className="text-slate-400 italic">No summary available</span>
+                <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                            <CardTitle>{context.name}</CardTitle>
+                            {isChildContext && (
+                                <Badge variant="secondary">
+                                    Child Context (Depth {context.depth})
+                                </Badge>
                             )}
                         </div>
+                        <CardDescription>
+                            {context.description ?? "No description provided."}
+                        </CardDescription>
+                        {isChildContext && (
+                            <div className="text-xs text-slate-500 mt-2">
+                                This is a child context created from a case
+                                result. It inherits configuration from its
+                                parent and stores incremental messages.
+                            </div>
+                        )}
                     </div>
-                </div>
-                <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                        <h4 className="text-sm font-semibold text-slate-700">
-                            Cases
-                        </h4>
-                        <span className="text-xs text-slate-500">
-                            {context.cases?.length || 0} total
-                        </span>
+                    <div className="flex flex-wrap gap-2">
+                        <Button
+                            size="sm"
+                            variant={
+                                isRunning && runningSource === "context"
+                                    ? "destructive"
+                                    : "default"
+                            }
+                            disabled={isBusy && runningSource !== "context"}
+                            onClick={() => {
+                                void onRun();
+                            }}
+                        >
+                            {isRunning && runningSource === "context" ? (
+                                <>
+                                    <Square className="mr-2 size-4" />
+                                    Stop
+                                </>
+                            ) : (
+                                <>
+                                    <Play className="mr-2 size-4" />
+                                    Run context
+                                </>
+                            )}
+                        </Button>
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={isBusy}
+                            onClick={() => {
+                                void onAddCase();
+                            }}
+                        >
+                            <Plus className="mr-2 size-4" />
+                            Add case
+                        </Button>
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={isBusy}
+                            onClick={() => setBatchAddDialogOpen(true)}
+                        >
+                            <Upload className="mr-2 size-4" />
+                            Batch add cases
+                        </Button>
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={isBusy}
+                            onClick={onEdit}
+                        >
+                            <Settings2 className="mr-2 size-4" />
+                            Edit
+                        </Button>
+                        <Button
+                            size="sm"
+                            variant="destructive"
+                            disabled={isBusy}
+                            onClick={() => {
+                                void onDelete();
+                            }}
+                        >
+                            <Trash2 className="mr-2 size-4" />
+                            Delete
+                        </Button>
                     </div>
-                    {/* Score Statistics */}
-                    {scoreStats.totalItems > 0 && (
-                        <div className="rounded-lg border bg-slate-50 px-4 py-3">
-                            <div className="flex items-center gap-6 text-sm">
-                                <div className="flex items-center gap-2">
-                                    <span className="text-slate-600">Average Score:</span>
-                                    <span className="font-semibold text-slate-900">
-                                        {formatScore(scoreStats.averageScore)}
+                </CardHeader>
+                <CardContent className="space-y-6">
+                    <div className="space-y-4">
+                        <div className="space-y-2">
+                            <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Recent Messages
+                            </h4>
+                            <JsonViewer
+                                value={context.resolvedMessages ?? []}
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                                <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                    Context Summary
+                                </h4>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={isGeneratingSummary || isBusy}
+                                    onClick={() => {
+                                        void handleGenerateSummary();
+                                    }}
+                                    className="h-6 px-2 text-xs"
+                                >
+                                    <Sparkles className="mr-1 size-3" />
+                                    {isGeneratingSummary
+                                        ? "Generating..."
+                                        : "Generate"}
+                                </Button>
+                            </div>
+                            <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm min-h-[100px]">
+                                {context.contextSummary ? (
+                                    <MarkdownRenderer
+                                        content={context.contextSummary}
+                                    />
+                                ) : (
+                                    <span className="text-slate-400 italic">
+                                        No summary available
                                     </span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <span className="text-slate-600">Scored:</span>
-                                    <span className="font-semibold text-slate-900">
-                                        {scoreStats.scoredItems}/{scoreStats.totalItems}
-                                    </span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <span className="text-slate-600">Pass Rate:</span>
-                                    <span className="font-semibold text-slate-900">
-                                        {formatPassRate(scoreStats.passCount, scoreStats.scoredItems)}
-                                    </span>
-                                </div>
+                                )}
                             </div>
                         </div>
-                    )}
-                    <div className="space-y-2">
-                            {context.cases?.map((testCase) => {
-                            const status = testCase.lastRunSummary?.status;
-                            const completedAt = testCase.lastRunSummary
-                                ?.completedAt
-                                ? formatDate(
-                                      testCase.lastRunSummary.completedAt,
-                                  )
-                                : "Never run";
-
-                            return (
-                                <div
-                                    key={testCase.id}
-                                    className={cn(
-                                        "rounded-lg border bg-white px-3 py-2 shadow-xs transition",
-                                        selectedCaseId === testCase.id
-                                            ? "border-primary bg-primary/5"
-                                            : "hover:border-slate-300",
-                                    )}
-                                >
-                                    <div className="flex items-start justify-between gap-2">
-                                        <button
-                                            type="button"
-                                            className="flex-1 text-left"
-                                            onClick={() =>
-                                                onSelectCase(testCase.id)
-                                            }
-                                        >
-                                            <p className="text-sm font-medium text-slate-900">
-                                                {testCase.title}
-                                            </p>
-                                            <p className="text-xs text-slate-500">
-                                                {testCase.description
-                                                    ? testCase.description
-                                                    : "No description"}
-                                            </p>
-                                        </button>
-                                        <div className="flex items-center gap-1">
-                                            {status ? (
-                                                <Badge
-                                                    variant={
-                                                        statusVariantMap[status]
-                                                    }
-                                                >
-                                                    {statusLabelMap[status]}
-                                                </Badge>
-                                            ) : null}
-                                            <Button
-                                                size="icon"
-                                                variant="ghost"
-                                                disabled={isBusy}
-                                                onClick={() => {
-                                                    void onRunCase(
-                                                        testCase.id,
-                                                        testCase.title,
-                                                    );
-                                                }}
-                                                aria-label={`Run ${testCase.title}`}
-                                            >
-                                                <Play className="size-4" />
-                                            </Button>
-                                            <Button
-                                                size="icon"
-                                                variant="ghost"
-                                                onClick={() =>
-                                                    onEditCase(testCase.id)
-                                                }
-                                                aria-label={`Edit ${testCase.title}`}
-                                            >
-                                                <Settings2 className="size-4" />
-                                            </Button>
-                                            <Button
-                                                size="icon"
-                                                variant="ghost"
-                                                disabled={isBusy}
-                                                onClick={async () => {
-                                                    const confirmed = window.confirm(
-                                                        `Are you sure you want to delete the case "${testCase.title}"?\n\nThis action cannot be undone.`
-                                                    );
-                                                    if (confirmed) {
-                                                        try {
-                                                            await fetch(`/api/evaluations/cases/${testCase.id}`, {
-                                                                method: "DELETE",
-                                                            });
-                                                            await onRefresh();
-                                                            // Show success toast
-                                                            const { toast } = await import("react-hot-toast");
-                                                            toast.success("Case deleted successfully");
-                                                        } catch (error) {
-                                                            const { toast } = await import("react-hot-toast");
-                                                            toast.error(
-                                                                error instanceof Error
-                                                                    ? error.message
-                                                                    : "Failed to delete case"
-                                                            );
-                                                        }
-                                                    }
-                                                }}
-                                                aria-label={`Delete ${testCase.title}`}
-                                            >
-                                                <Trash2 className="size-4" />
-                                            </Button>
-                                        </div>
+                    </div>
+                    <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                            <h4 className="text-sm font-semibold text-slate-700">
+                                Cases
+                            </h4>
+                            <span className="text-xs text-slate-500">
+                                {context.cases?.length || 0} total
+                            </span>
+                        </div>
+                        {/* Score Statistics */}
+                        {scoreStats.totalItems > 0 && (
+                            <div className="rounded-lg border bg-slate-50 px-4 py-3">
+                                <div className="flex items-center gap-6 text-sm">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-slate-600">
+                                            Average Score:
+                                        </span>
+                                        <span className="font-semibold text-slate-900">
+                                            {formatScore(
+                                                scoreStats.averageScore,
+                                            )}
+                                        </span>
                                     </div>
-                                    <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
-                                        <span>{completedAt}</span>
-                                        {testCase.lastRunSummary?.durationMs ? (
-                                            <span>
-                                                {
-                                                    testCase.lastRunSummary
-                                                        .durationMs
-                                                }{" "}
-                                                ms
-                                            </span>
-                                        ) : null}
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-slate-600">
+                                            Scored:
+                                        </span>
+                                        <span className="font-semibold text-slate-900">
+                                            {scoreStats.scoredItems}/
+                                            {scoreStats.totalItems}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-slate-600">
+                                            Pass Rate:
+                                        </span>
+                                        <span className="font-semibold text-slate-900">
+                                            {formatPassRate(
+                                                scoreStats.passCount,
+                                                scoreStats.scoredItems,
+                                            )}
+                                        </span>
                                     </div>
                                 </div>
-                            );
-                        })}
-                        {(context.cases?.length || 0) === 0 ? (
-                            <div className="rounded-lg border border-dashed bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-                                No cases yet. Use "Add case" to create one.
                             </div>
-                        ) : null}
+                        )}
+                        <div className="space-y-2">
+                            {context.cases?.map((testCase) => {
+                                const status = testCase.lastRunSummary?.status;
+                                const completedAt = testCase.lastRunSummary
+                                    ?.completedAt
+                                    ? formatDate(
+                                          testCase.lastRunSummary.completedAt,
+                                      )
+                                    : "Never run";
+
+                                return (
+                                    <div
+                                        key={testCase.id}
+                                        className={cn(
+                                            "rounded-lg border bg-white px-3 py-2 shadow-xs transition",
+                                            selectedCaseId === testCase.id
+                                                ? "border-primary bg-primary/5"
+                                                : "hover:border-slate-300",
+                                        )}
+                                    >
+                                        <div className="flex items-start justify-between gap-2">
+                                            <button
+                                                type="button"
+                                                className="flex-1 text-left"
+                                                onClick={() =>
+                                                    onSelectCase(testCase.id)
+                                                }
+                                            >
+                                                <p className="text-sm font-medium text-slate-900">
+                                                    {testCase.title}
+                                                </p>
+                                                <p className="text-xs text-slate-500">
+                                                    {testCase.description
+                                                        ? testCase.description
+                                                        : "No description"}
+                                                </p>
+                                            </button>
+                                            <div className="flex items-center gap-1">
+                                                {status ? (
+                                                    <Badge
+                                                        variant={
+                                                            statusVariantMap[
+                                                                status
+                                                            ]
+                                                        }
+                                                    >
+                                                        {statusLabelMap[status]}
+                                                    </Badge>
+                                                ) : null}
+                                                <Button
+                                                    size="icon"
+                                                    variant="ghost"
+                                                    disabled={isBusy}
+                                                    onClick={() => {
+                                                        void onRunCase(
+                                                            testCase.id,
+                                                            testCase.title,
+                                                        );
+                                                    }}
+                                                    aria-label={`Run ${testCase.title}`}
+                                                >
+                                                    <Play className="size-4" />
+                                                </Button>
+                                                <Button
+                                                    size="icon"
+                                                    variant="ghost"
+                                                    onClick={() =>
+                                                        onEditCase(testCase.id)
+                                                    }
+                                                    aria-label={`Edit ${testCase.title}`}
+                                                >
+                                                    <Settings2 className="size-4" />
+                                                </Button>
+                                                <Button
+                                                    size="icon"
+                                                    variant="ghost"
+                                                    disabled={isBusy}
+                                                    onClick={async () => {
+                                                        const confirmed =
+                                                            window.confirm(
+                                                                `Are you sure you want to delete the case "${testCase.title}"?\n\nThis action cannot be undone.`,
+                                                            );
+                                                        if (confirmed) {
+                                                            try {
+                                                                await fetch(
+                                                                    `/api/evaluations/cases/${testCase.id}`,
+                                                                    {
+                                                                        method: "DELETE",
+                                                                    },
+                                                                );
+                                                                await onRefresh();
+                                                                // Show success toast
+                                                                const {
+                                                                    toast,
+                                                                } =
+                                                                    await import(
+                                                                        "react-hot-toast"
+                                                                    );
+                                                                toast.success(
+                                                                    "Case deleted successfully",
+                                                                );
+                                                            } catch (error) {
+                                                                const {
+                                                                    toast,
+                                                                } =
+                                                                    await import(
+                                                                        "react-hot-toast"
+                                                                    );
+                                                                toast.error(
+                                                                    error instanceof
+                                                                        Error
+                                                                        ? error.message
+                                                                        : "Failed to delete case",
+                                                                );
+                                                            }
+                                                        }
+                                                    }}
+                                                    aria-label={`Delete ${testCase.title}`}
+                                                >
+                                                    <Trash2 className="size-4" />
+                                                </Button>
+                                            </div>
+                                        </div>
+                                        <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                                            <span>{completedAt}</span>
+                                            {testCase.lastRunSummary
+                                                ?.durationMs ? (
+                                                <span>
+                                                    {
+                                                        testCase.lastRunSummary
+                                                            .durationMs
+                                                    }{" "}
+                                                    ms
+                                                </span>
+                                            ) : null}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                            {(context.cases?.length || 0) === 0 ? (
+                                <div className="rounded-lg border border-dashed bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                                    No cases yet. Use "Add case" to create one.
+                                </div>
+                            ) : null}
+                        </div>
                     </div>
-                </div>
-            </CardContent>
-        </Card>
-        {/* Batch Add Cases Dialog */}
-        <BatchAddCasesDialog
-            open={isBatchAddDialogOpen}
-            onOpenChange={setBatchAddDialogOpen}
-            contextId={context.id}
-            onSuccess={onRefresh}
-            isBusy={isBusy}
-        />
+                </CardContent>
+            </Card>
+            {/* Batch Add Cases Dialog */}
+            <BatchAddCasesDialog
+                open={isBatchAddDialogOpen}
+                onOpenChange={setBatchAddDialogOpen}
+                contextId={context.id}
+                onSuccess={onRefresh}
+                isBusy={isBusy}
+            />
         </>
     );
 }
@@ -3144,12 +3676,8 @@ function ContextEditDialog({
 }) {
     const [name, setName] = useState(context.name);
     const [description, setDescription] = useState(context.description ?? "");
-    const [contextSummary, setContextSummary] = useState(context.contextSummary ?? "");
-    const [environmentText, setEnvironmentText] = useState(
-        JSON.stringify(context.environment ?? {}, null, 2),
-    );
-    const [headersText, setHeadersText] = useState(
-        JSON.stringify(context.headers ?? {}, null, 2),
+    const [contextSummary, setContextSummary] = useState(
+        context.contextSummary ?? "",
     );
 
     useEffect(() => {
@@ -3157,38 +3685,13 @@ function ContextEditDialog({
         setName(context.name);
         setDescription(context.description ?? "");
         setContextSummary(context.contextSummary ?? "");
-        setEnvironmentText(
-            JSON.stringify(context.environment ?? {}, null, 2),
-        );
-        setHeadersText(JSON.stringify(context.headers ?? {}, null, 2));
     }, [open, context]);
 
     const handleSave = async () => {
-        let parsedEnvironment: Record<string, unknown> = {};
-        let parsedHeaders: Record<string, string> = {};
-
-        try {
-            parsedEnvironment =
-                environmentText.trim().length > 0 ? JSON.parse(environmentText) : {};
-        } catch {
-            toast.error("Environment JSON is invalid.");
-            return;
-        }
-
-        try {
-            parsedHeaders =
-                headersText.trim().length > 0 ? JSON.parse(headersText) : {};
-        } catch {
-            toast.error("Headers JSON is invalid.");
-            return;
-        }
-
         await onSave({
             name,
             description,
             contextSummary,
-            environment: parsedEnvironment,
-            headers: parsedHeaders,
         });
         onOpenChange(false);
     };
@@ -3199,7 +3702,7 @@ function ContextEditDialog({
                 <DialogHeader>
                     <DialogTitle>Edit context</DialogTitle>
                     <DialogDescription>
-                        Adjust metadata, params, and headers for this context.
+                        Adjust metadata and summary for this context.
                     </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-5">
@@ -3238,32 +3741,6 @@ function ContextEditDialog({
                             placeholder="Enter a summary for this context..."
                             onChange={(event) =>
                                 setContextSummary(event.target.value)
-                            }
-                        />
-                    </div>
-                    <div className="space-y-2">
-                        <Label htmlFor="edit-context-environment">
-                            Environment JSON
-                        </Label>
-                        <Textarea
-                            id="edit-context-environment"
-                            rows={8}
-                            value={environmentText}
-                            onChange={(event) =>
-                                setEnvironmentText(event.target.value)
-                            }
-                        />
-                    </div>
-                    <div className="space-y-2">
-                        <Label htmlFor="edit-context-headers">
-                            Headers JSON
-                        </Label>
-                        <Textarea
-                            id="edit-context-headers"
-                            rows={5}
-                            value={headersText}
-                            onChange={(event) =>
-                                setHeadersText(event.target.value)
                             }
                         />
                     </div>
@@ -3313,19 +3790,29 @@ function CaseSummary({
     runningSource: RunSource;
     onRefresh: () => Promise<void>;
     versionId: string;
-    onUpdateCase: (contextId: string, caseId: string, updates: Partial<EvaluationCase>) => Promise<void>;
+    onUpdateCase: (
+        contextId: string,
+        caseId: string,
+        updates: Partial<EvaluationCase>,
+    ) => Promise<void>;
     versionMode: VersionMode;
 }) {
     const status = testCase.lastRunSummary?.status;
     const [isSaving, setIsSaving] = useState(false);
     const [isEvaluating, setIsEvaluating] = useState(false);
-    const [evalRule, setEvalRule] = useState(testCase.evalRule || DEFAULT_EVAL_RULE);
+    const [evalRule, setEvalRule] = useState(
+        testCase.evalRule || DEFAULT_EVAL_RULE,
+    );
     const [isSavingEvalRule, setIsSavingEvalRule] = useState(false);
 
     // 按需加载 responseContent
-    const [loadedResponseContent, setLoadedResponseContent] = useState<string | null>(null);
+    const [loadedResponseContent, setLoadedResponseContent] = useState<
+        string | null
+    >(null);
     const [isLoadingResponse, setIsLoadingResponse] = useState(false);
-    const [responseLoadError, setResponseLoadError] = useState<string | null>(null);
+    const [responseLoadError, setResponseLoadError] = useState<string | null>(
+        null,
+    );
 
     // Sync evalRule with testCase.evalRule when it changes
     useEffect(() => {
@@ -3338,7 +3825,7 @@ function CaseSummary({
         setResponseLoadError(null);
         try {
             const response = await fetch(
-                `/api/evaluations/results?versionId=${versionId}&caseId=${testCase.id}`
+                `/api/evaluations/results?versionId=${versionId}&caseId=${testCase.id}`,
             );
 
             if (!response.ok) {
@@ -3353,7 +3840,9 @@ function CaseSummary({
         } catch (error) {
             console.error("Failed to load response content:", error);
             setResponseLoadError(
-                error instanceof Error ? error.message : "Failed to load response"
+                error instanceof Error
+                    ? error.message
+                    : "Failed to load response",
             );
         } finally {
             setIsLoadingResponse(false);
@@ -3366,7 +3855,10 @@ function CaseSummary({
         setResponseLoadError(null);
 
         // 如果当前 case 有执行结果但没有 responseContent，自动加载
-        if (testCase.lastRunSummary && !testCase.lastRunSummary.responseContent) {
+        if (
+            testCase.lastRunSummary &&
+            !testCase.lastRunSummary.responseContent
+        ) {
             void loadResponseContent();
         }
     }, [testCase.id, versionId]);
@@ -3383,7 +3875,7 @@ function CaseSummary({
             toast.error(
                 error instanceof Error
                     ? error.message
-                    : "Failed to save evaluation rule"
+                    : "Failed to save evaluation rule",
             );
         } finally {
             setIsSavingEvalRule(false);
@@ -3401,7 +3893,7 @@ function CaseSummary({
                     body: JSON.stringify({
                         versionId,
                     }),
-                }
+                },
             );
 
             if (!response.ok) {
@@ -3419,9 +3911,7 @@ function CaseSummary({
         } catch (error) {
             console.error("Failed to evaluate:", error);
             toast.error(
-                error instanceof Error
-                    ? error.message
-                    : "Failed to evaluate"
+                error instanceof Error ? error.message : "Failed to evaluate",
             );
         } finally {
             setIsEvaluating(false);
@@ -3429,7 +3919,8 @@ function CaseSummary({
     };
 
     const handleSaveToContext = async () => {
-        const responseContent = testCase.lastRunSummary?.responseContent || loadedResponseContent;
+        const responseContent =
+            testCase.lastRunSummary?.responseContent || loadedResponseContent;
 
         if (!responseContent) {
             toast.error("No response content to save");
@@ -3438,7 +3929,9 @@ function CaseSummary({
 
         // 前端诊断：仅对 SSE agent 模式分析 responseContent
         if (versionMode !== "voice-agent") {
-            console.log("[Frontend Debug] Analyzing responseContent before saving...");
+            console.log(
+                "[Frontend Debug] Analyzing responseContent before saving...",
+            );
 
             const lines = responseContent.split("\n");
             const eventTypes = new Map<string, number>();
@@ -3486,7 +3979,7 @@ function CaseSummary({
                         caseTitle: testCase.title,
                         mode: versionMode,
                     }),
-                }
+                },
             );
 
             if (!response.ok) {
@@ -3500,7 +3993,7 @@ function CaseSummary({
                 messagesAdded: number;
             };
             toast.success(
-                `Created new context with ${result.messagesAdded} messages`
+                `Created new context with ${result.messagesAdded} messages`,
             );
 
             // 刷新数据以显示新创建的 context
@@ -3510,7 +4003,7 @@ function CaseSummary({
             toast.error(
                 error instanceof Error
                     ? error.message
-                    : "Failed to save to context"
+                    : "Failed to save to context",
             );
         } finally {
             setIsSaving(false);
@@ -3530,7 +4023,11 @@ function CaseSummary({
                     <div className="flex flex-wrap gap-2">
                         <Button
                             size="sm"
-                            variant={isRunning && runningSource === "case" ? "destructive" : "default"}
+                            variant={
+                                isRunning && runningSource === "case"
+                                    ? "destructive"
+                                    : "default"
+                            }
                             disabled={isBusy && runningSource !== "case"}
                             onClick={() => {
                                 void onRun();
@@ -3627,9 +4124,13 @@ function CaseSummary({
                 <CardContent>
                     <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm min-h-[60px]">
                         {context.contextSummary ? (
-                            <MarkdownRenderer content={context.contextSummary} />
+                            <MarkdownRenderer
+                                content={context.contextSummary}
+                            />
                         ) : (
-                            <span className="text-slate-400 italic">No summary available</span>
+                            <span className="text-slate-400 italic">
+                                No summary available
+                            </span>
                         )}
                     </div>
                 </CardContent>
@@ -3678,12 +4179,18 @@ function CaseSummary({
                                     Score
                                 </span>
                                 <div className="flex items-center">
-                                    {testCase.lastRunSummary?.score !== undefined ? (
-                                        <Badge variant="default" className="text-lg px-4 py-2">
+                                    {testCase.lastRunSummary?.score !==
+                                    undefined ? (
+                                        <Badge
+                                            variant="default"
+                                            className="text-lg px-4 py-2"
+                                        >
                                             {testCase.lastRunSummary.score}
                                         </Badge>
                                     ) : (
-                                        <span className="text-sm text-slate-400">-</span>
+                                        <span className="text-sm text-slate-400">
+                                            -
+                                        </span>
                                     )}
                                 </div>
                             </div>
@@ -3704,18 +4211,23 @@ function CaseSummary({
                                         className="h-7 px-2 text-xs"
                                     >
                                         <Save className="mr-1 size-3" />
-                                        {isSavingEvalRule ? "Saving..." : "Save"}
+                                        {isSavingEvalRule
+                                            ? "Saving..."
+                                            : "Save"}
                                     </Button>
                                 </div>
                                 <Textarea
                                     value={evalRule}
-                                    onChange={(e) => setEvalRule(e.target.value)}
+                                    onChange={(e) =>
+                                        setEvalRule(e.target.value)
+                                    }
                                     rows={4}
                                     className="text-sm"
                                     placeholder="Enter evaluation criteria..."
                                 />
                                 <p className="text-xs text-slate-500">
-                                    Default rule is provided if empty. You can customize it for specific requirements.
+                                    Default rule is provided if empty. You can
+                                    customize it for specific requirements.
                                 </p>
                             </div>
                         </div>
@@ -3727,9 +4239,16 @@ function CaseSummary({
                             </span>
                             <div className="rounded-md border border-slate-200 bg-white p-3 text-sm min-h-[60px]">
                                 {testCase.lastRunSummary?.resultOverview ? (
-                                    <MarkdownRenderer content={testCase.lastRunSummary.resultOverview} />
+                                    <MarkdownRenderer
+                                        content={
+                                            testCase.lastRunSummary
+                                                .resultOverview
+                                        }
+                                    />
                                 ) : (
-                                    <span className="text-slate-400 italic">No overview available</span>
+                                    <span className="text-slate-400 italic">
+                                        No overview available
+                                    </span>
                                 )}
                             </div>
                         </div>
@@ -3743,10 +4262,13 @@ function CaseSummary({
                             <div className="space-y-1">
                                 <CardTitle>Response content</CardTitle>
                                 <CardDescription>
-                                    {versionMode === "voice-agent" ? "JSON response from the voice agent." : "Stream response from the agent."}
+                                    {versionMode === "voice-agent"
+                                        ? "JSON response from the voice agent."
+                                        : "Stream response from the agent."}
                                 </CardDescription>
                             </div>
-                            {(testCase.lastRunSummary.responseContent || loadedResponseContent) && (
+                            {(testCase.lastRunSummary.responseContent ||
+                                loadedResponseContent) && (
                                 <Button
                                     size="sm"
                                     variant="outline"
@@ -3762,17 +4284,22 @@ function CaseSummary({
                         </div>
                     </CardHeader>
                     <CardContent>
-                        {testCase.lastRunSummary.responseContent || loadedResponseContent ? (
+                        {testCase.lastRunSummary.responseContent ||
+                        loadedResponseContent ? (
                             versionMode === "voice-agent" ? (
                                 <VoiceAgentResponseViewer
                                     responseContent={
-                                        testCase.lastRunSummary.responseContent || loadedResponseContent!
+                                        testCase.lastRunSummary
+                                            .responseContent ||
+                                        loadedResponseContent!
                                     }
                                 />
                             ) : (
                                 <SSEResponseViewer
                                     responseContent={
-                                        testCase.lastRunSummary.responseContent || loadedResponseContent!
+                                        testCase.lastRunSummary
+                                            .responseContent ||
+                                        loadedResponseContent!
                                     }
                                 />
                             )
@@ -3785,7 +4312,9 @@ function CaseSummary({
                             </div>
                         ) : responseLoadError ? (
                             <div className="flex flex-col items-center justify-center py-8 text-slate-500">
-                                <p className="mb-3 text-sm text-red-600">{responseLoadError}</p>
+                                <p className="mb-3 text-sm text-red-600">
+                                    {responseLoadError}
+                                </p>
                                 <Button
                                     size="sm"
                                     variant="outline"
@@ -3837,7 +4366,9 @@ function CaseEditDialog({
         const content = testCase.userMessage.content;
         return typeof content === "string" ? content : "";
     });
-    const [evalRule, setEvalRule] = useState(testCase.evalRule || DEFAULT_EVAL_RULE);
+    const [evalRule, setEvalRule] = useState(
+        testCase.evalRule || DEFAULT_EVAL_RULE,
+    );
 
     useEffect(() => {
         if (!open) return;
@@ -3855,10 +4386,11 @@ function CaseEditDialog({
 
         if ((!finalTitle || finalTitle === "New Case") && trimmedMessage) {
             // 取第一行或前 50 个字符作为标题
-            const firstLine = trimmedMessage.split('\n')[0];
-            finalTitle = firstLine.length > 50
-                ? firstLine.substring(0, 50) + "..."
-                : firstLine;
+            const firstLine = trimmedMessage.split("\n")[0];
+            finalTitle =
+                firstLine.length > 50
+                    ? firstLine.substring(0, 50) + "..."
+                    : firstLine;
         }
 
         const userMessage: EvaluationCase["userMessage"] = {
@@ -3938,7 +4470,8 @@ function CaseEditDialog({
                             }
                         />
                         <p className="text-xs text-slate-500">
-                            Default rule is provided if empty. You can customize it for specific requirements.
+                            Default rule is provided if empty. You can customize
+                            it for specific requirements.
                         </p>
                     </div>
                 </div>
@@ -4016,9 +4549,7 @@ function UserMessageDisplay({
 
     if (!message.content.length) {
         return (
-            <div className="text-sm text-slate-500">
-                No parts configured.
-            </div>
+            <div className="text-sm text-slate-500">No parts configured.</div>
         );
     }
 
@@ -4091,9 +4622,7 @@ function UserMessageDisplay({
 function MessagePreview({
     message,
 }: {
-    message:
-        | EvaluationCase["userMessage"]
-        | undefined;
+    message: EvaluationCase["userMessage"] | undefined;
 }) {
     if (!message) {
         return (
@@ -4291,7 +4820,10 @@ function mergeTextDeltas(events: SSEEvent[]): SSEEvent[] {
             while (j < events.length) {
                 const nextEvent = events[j];
 
-                if (nextEvent.type === "text-end" && nextEvent.id === startEvent.id) {
+                if (
+                    nextEvent.type === "text-end" &&
+                    nextEvent.id === startEvent.id
+                ) {
                     // Found the matching text-end, create merged event
                     if (textDeltas.length > 0) {
                         merged.push({
@@ -4307,10 +4839,17 @@ function mergeTextDeltas(events: SSEEvent[]): SSEEvent[] {
                     break;
                 }
 
-                if (nextEvent.type === "text-delta" && nextEvent.id === startEvent.id && nextEvent.text) {
+                if (
+                    nextEvent.type === "text-delta" &&
+                    nextEvent.id === startEvent.id &&
+                    nextEvent.text
+                ) {
                     // This is a text-delta for this text block, accumulate it
                     textDeltas.push(nextEvent.text);
-                } else if (nextEvent.type !== "text-delta" || nextEvent.id !== startEvent.id) {
+                } else if (
+                    nextEvent.type !== "text-delta" ||
+                    nextEvent.id !== startEvent.id
+                ) {
                     // This is NOT a text-delta for this text block (different id or different type)
                     // It's a different event (like tool-call, tool-result, etc.)
                     // We need to preserve it!
@@ -4447,21 +4986,22 @@ function SSEResponseViewer({ responseContent }: { responseContent: string }) {
         new Set(),
     );
 
-    const rawEvents = useMemo(() => parseSSEResponse(responseContent), [
-        responseContent,
-    ]);
+    const rawEvents = useMemo(
+        () => parseSSEResponse(responseContent),
+        [responseContent],
+    );
     const events = useMemo(() => {
         const merged = mergeTextDeltas(rawEvents);
 
         // 调试：统计事件类型
         const eventTypes = new Map<string, number>();
-        rawEvents.forEach(e => {
+        rawEvents.forEach((e) => {
             const type = e.type || "unknown";
             eventTypes.set(type, (eventTypes.get(type) || 0) + 1);
         });
 
         const mergedEventTypes = new Map<string, number>();
-        merged.forEach(e => {
+        merged.forEach((e) => {
             const type = e.type || "unknown";
             mergedEventTypes.set(type, (mergedEventTypes.get(type) || 0) + 1);
         });
@@ -4474,12 +5014,21 @@ function SSEResponseViewer({ responseContent }: { responseContent: string }) {
         });
 
         // 检查 tool-call 是否被过滤掉
-        const toolCallInRaw = rawEvents.filter(e => e.type === "tool-call").length;
-        const toolCallInMerged = merged.filter(e => e.type === "tool-call").length;
+        const toolCallInRaw = rawEvents.filter(
+            (e) => e.type === "tool-call",
+        ).length;
+        const toolCallInMerged = merged.filter(
+            (e) => e.type === "tool-call",
+        ).length;
 
         if (toolCallInRaw > 0 && toolCallInMerged === 0) {
-            console.warn("⚠️ [SSEResponseViewer] tool-call events were filtered out during merge!");
-            console.warn("Raw tool-call events:", rawEvents.filter(e => e.type === "tool-call"));
+            console.warn(
+                "⚠️ [SSEResponseViewer] tool-call events were filtered out during merge!",
+            );
+            console.warn(
+                "Raw tool-call events:",
+                rawEvents.filter((e) => e.type === "tool-call"),
+            );
         }
 
         return merged;
@@ -4539,14 +5088,17 @@ function SSEResponseViewer({ responseContent }: { responseContent: string }) {
 
                     // 调试：记录渲染决策
                     if (type === "tool-call") {
-                        console.log(`[SSEResponseViewer] Rendering tool-call event #${index}:`, {
-                            type,
-                            isCollapsible,
-                            isHidden,
-                            showHidden,
-                            willRender: !isHidden,
-                            event,
-                        });
+                        console.log(
+                            `[SSEResponseViewer] Rendering tool-call event #${index}:`,
+                            {
+                                type,
+                                isCollapsible,
+                                isHidden,
+                                showHidden,
+                                willRender: !isHidden,
+                                event,
+                            },
+                        );
                     }
 
                     if (isHidden) return null;
@@ -4593,7 +5145,11 @@ function SSEResponseViewer({ responseContent }: { responseContent: string }) {
                                         ).toLocaleTimeString()}
                                     </span>
                                 )}
-                                <CopyChunkButton getData={() => JSON.stringify(eventData, null, 2)} />
+                                <CopyChunkButton
+                                    getData={() =>
+                                        JSON.stringify(eventData, null, 2)
+                                    }
+                                />
                             </div>
 
                             {(!isCollapsible || isExpanded) && (
@@ -4603,19 +5159,27 @@ function SSEResponseViewer({ responseContent }: { responseContent: string }) {
                                             .split("\n")
                                             .map((line, i) => {
                                                 const match =
-                                                    line.match(/\*\*"(.+?)"\*\*/);
-                                                if (match) {
-                                                    const parts = line.split(
+                                                    line.match(
                                                         /\*\*"(.+?)"\*\*/,
                                                     );
+                                                if (match) {
+                                                    const parts =
+                                                        line.split(
+                                                            /\*\*"(.+?)"\*\*/,
+                                                        );
                                                     return (
-                                                        <div key={i} className="break-words">
+                                                        <div
+                                                            key={i}
+                                                            className="break-words"
+                                                        >
                                                             {parts.map(
                                                                 (part, j) =>
                                                                     j % 2 ===
                                                                     1 ? (
                                                                         <strong
-                                                                            key={j}
+                                                                            key={
+                                                                                j
+                                                                            }
                                                                             className="rounded bg-slate-200 px-1"
                                                                         >
                                                                             &quot;
@@ -4631,7 +5195,14 @@ function SSEResponseViewer({ responseContent }: { responseContent: string }) {
                                                         </div>
                                                     );
                                                 }
-                                                return <div key={i} className="break-words">{line}</div>;
+                                                return (
+                                                    <div
+                                                        key={i}
+                                                        className="break-words"
+                                                    >
+                                                        {line}
+                                                    </div>
+                                                );
                                             })}
                                     </pre>
                                 </div>
@@ -4659,21 +5230,31 @@ interface VoiceAgentMessage {
     tool_call_id?: string;
 }
 
-function VoiceAgentResponseViewer({ responseContent }: { responseContent: string }) {
-    const [expandedEvents, setExpandedEvents] = useState<Set<number>>(new Set());
+function VoiceAgentResponseViewer({
+    responseContent,
+}: {
+    responseContent: string;
+}) {
+    const [expandedEvents, setExpandedEvents] = useState<Set<number>>(
+        new Set(),
+    );
 
     const { messages: parsed, raw } = useMemo(() => {
         try {
             const data = JSON.parse(responseContent) as Record<string, unknown>;
             // 支持 { messages: [...] } 和 { data: { messages: [...] } } 两种结构
-            const messages = (
-                (data.messages as VoiceAgentMessage[] | undefined)
-                ?? ((data.data as Record<string, unknown> | undefined)?.messages as VoiceAgentMessage[] | undefined)
-                ?? []
-            );
+            const messages =
+                (data.messages as VoiceAgentMessage[] | undefined) ??
+                ((data.data as Record<string, unknown> | undefined)?.messages as
+                    | VoiceAgentMessage[]
+                    | undefined) ??
+                [];
             return { messages, raw: JSON.stringify(data, null, 2) };
         } catch {
-            return { messages: [] as VoiceAgentMessage[], raw: responseContent };
+            return {
+                messages: [] as VoiceAgentMessage[],
+                raw: responseContent,
+            };
         }
     }, [responseContent]);
 
@@ -4693,7 +5274,11 @@ function VoiceAgentResponseViewer({ responseContent }: { responseContent: string
                 for (const tc of msg.tool_calls) {
                     let args: unknown;
                     if (typeof tc.function.arguments === "string") {
-                        try { args = JSON.parse(tc.function.arguments); } catch { args = tc.function.arguments; }
+                        try {
+                            args = JSON.parse(tc.function.arguments);
+                        } catch {
+                            args = tc.function.arguments;
+                        }
                     } else {
                         args = tc.function.arguments;
                     }
@@ -4702,14 +5287,22 @@ function VoiceAgentResponseViewer({ responseContent }: { responseContent: string
                         label: tc.function.name,
                         borderColor: "border-cyan-500",
                         collapsible: true,
-                        detail: { toolName: tc.function.name, id: tc.id, input: args },
+                        detail: {
+                            toolName: tc.function.name,
+                            id: tc.id,
+                            input: args,
+                        },
                     });
                 }
             }
             if (msg.role === "tool") {
                 let output: unknown;
                 if (typeof msg.content === "string") {
-                    try { output = JSON.parse(msg.content); } catch { output = msg.content; }
+                    try {
+                        output = JSON.parse(msg.content);
+                    } catch {
+                        output = msg.content;
+                    }
                 } else {
                     output = msg.content;
                 }
@@ -4737,14 +5330,20 @@ function VoiceAgentResponseViewer({ responseContent }: { responseContent: string
     // 默认展开所有 collapsible 事件
     useEffect(() => {
         const all = new Set<number>();
-        events.forEach((e, i) => { if (e.collapsible) all.add(i); });
+        events.forEach((e, i) => {
+            if (e.collapsible) all.add(i);
+        });
         setExpandedEvents(all);
     }, [events]);
 
     const toggleEvent = useCallback((index: number) => {
         setExpandedEvents((prev) => {
             const next = new Set(prev);
-            if (next.has(index)) { next.delete(index); } else { next.add(index); }
+            if (next.has(index)) {
+                next.delete(index);
+            } else {
+                next.add(index);
+            }
             return next;
         });
     }, []);
@@ -4783,7 +5382,11 @@ function VoiceAgentResponseViewer({ responseContent }: { responseContent: string
                             className={`rounded border-l-4 bg-white p-3 shadow-sm ${event.borderColor} ${
                                 event.collapsible ? "cursor-pointer" : ""
                             }`}
-                            onClick={event.collapsible ? () => toggleEvent(index) : undefined}
+                            onClick={
+                                event.collapsible
+                                    ? () => toggleEvent(index)
+                                    : undefined
+                            }
                         >
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2">
@@ -4791,7 +5394,10 @@ function VoiceAgentResponseViewer({ responseContent }: { responseContent: string
                                         {event.type}
                                     </span>
                                     {event.label && (
-                                        <Badge variant="secondary" className="text-[10px]">
+                                        <Badge
+                                            variant="secondary"
+                                            className="text-[10px]"
+                                        >
                                             {event.label}
                                         </Badge>
                                     )}
@@ -4801,11 +5407,17 @@ function VoiceAgentResponseViewer({ responseContent }: { responseContent: string
                                         </span>
                                     )}
                                 </div>
-                                <CopyChunkButton getData={() =>
-                                    event.summary
-                                        ? event.summary
-                                        : JSON.stringify(event.detail, null, 2)
-                                } />
+                                <CopyChunkButton
+                                    getData={() =>
+                                        event.summary
+                                            ? event.summary
+                                            : JSON.stringify(
+                                                  event.detail,
+                                                  null,
+                                                  2,
+                                              )
+                                    }
+                                />
                             </div>
 
                             {event.type === "text" && event.summary && (
@@ -4814,30 +5426,59 @@ function VoiceAgentResponseViewer({ responseContent }: { responseContent: string
                                 </div>
                             )}
 
-                            {event.collapsible && isExpanded && event.detail != null ? (
+                            {event.collapsible &&
+                            isExpanded &&
+                            event.detail != null ? (
                                 <div className="mt-2">
                                     <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs text-slate-700">
                                         {highlightImportantKeys(event.detail)
                                             .split("\n")
                                             .map((line, i) => {
-                                                const match = line.match(/\*\*"(.+?)"\*\*/);
+                                                const match =
+                                                    line.match(
+                                                        /\*\*"(.+?)"\*\*/,
+                                                    );
                                                 if (match) {
-                                                    const parts = line.split(/\*\*"(.+?)"\*\*/);
+                                                    const parts =
+                                                        line.split(
+                                                            /\*\*"(.+?)"\*\*/,
+                                                        );
                                                     return (
-                                                        <div key={i} className="break-words">
-                                                            {parts.map((part, j) =>
-                                                                j % 2 === 1 ? (
-                                                                    <strong key={j} className="rounded bg-slate-200 px-1">
-                                                                        &quot;{part}&quot;
-                                                                    </strong>
-                                                                ) : (
-                                                                    part
-                                                                ),
+                                                        <div
+                                                            key={i}
+                                                            className="break-words"
+                                                        >
+                                                            {parts.map(
+                                                                (part, j) =>
+                                                                    j % 2 ===
+                                                                    1 ? (
+                                                                        <strong
+                                                                            key={
+                                                                                j
+                                                                            }
+                                                                            className="rounded bg-slate-200 px-1"
+                                                                        >
+                                                                            &quot;
+                                                                            {
+                                                                                part
+                                                                            }
+                                                                            &quot;
+                                                                        </strong>
+                                                                    ) : (
+                                                                        part
+                                                                    ),
                                                             )}
                                                         </div>
                                                     );
                                                 }
-                                                return <div key={i} className="break-words">{line}</div>;
+                                                return (
+                                                    <div
+                                                        key={i}
+                                                        className="break-words"
+                                                    >
+                                                        {line}
+                                                    </div>
+                                                );
                                             })}
                                     </pre>
                                 </div>
@@ -4892,26 +5533,33 @@ function BatchAddCasesDialog({
 解释什么是机器学习,Response should explain machine learning concepts clearly
 翻译这段文字到英文,Response should provide accurate English translation`;
 
-        const blob = new Blob([sampleCSV], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement('a');
+        const blob = new Blob([sampleCSV], { type: "text/csv;charset=utf-8;" });
+        const link = document.createElement("a");
         link.href = URL.createObjectURL(blob);
-        link.download = 'batch_cases_sample.csv';
+        link.download = "batch_cases_sample.csv";
         link.click();
         URL.revokeObjectURL(link.href);
     };
 
     // Parse CSV file
     const parseCSV = (text: string): ParsedCase[] => {
-        const lines = text.split('\n').filter(line => line.trim());
+        const lines = text.split("\n").filter((line) => line.trim());
 
         if (lines.length < 2) {
-            throw new Error('CSV file must contain at least a header row and one data row');
+            throw new Error(
+                "CSV file must contain at least a header row and one data row",
+            );
         }
 
         // Validate header
         const header = lines[0].toLowerCase();
-        if (!header.includes('usermessage') || !header.includes('evaluation rule')) {
-            throw new Error('CSV header must contain "userMessage" and "Evaluation Rule" columns');
+        if (
+            !header.includes("usermessage") ||
+            !header.includes("evaluation rule")
+        ) {
+            throw new Error(
+                'CSV header must contain "userMessage" and "Evaluation Rule" columns',
+            );
         }
 
         // Parse data rows
@@ -4922,7 +5570,7 @@ function BatchAddCasesDialog({
 
             // Simple CSV parsing (handles quotes)
             const parts: string[] = [];
-            let current = '';
+            let current = "";
             let inQuotes = false;
 
             for (let j = 0; j < line.length; j++) {
@@ -4930,9 +5578,9 @@ function BatchAddCasesDialog({
 
                 if (char === '"') {
                     inQuotes = !inQuotes;
-                } else if (char === ',' && !inQuotes) {
+                } else if (char === "," && !inQuotes) {
                     parts.push(current.trim());
-                    current = '';
+                    current = "";
                 } else {
                     current += char;
                 }
@@ -4940,24 +5588,29 @@ function BatchAddCasesDialog({
             parts.push(current.trim());
 
             if (parts.length !== 2) {
-                throw new Error(`Row ${i + 1}: Expected 2 columns, found ${parts.length}`);
+                throw new Error(
+                    `Row ${i + 1}: Expected 2 columns, found ${parts.length}`,
+                );
             }
 
-            const [userMessage, evalRule] = parts.map(p => p.replace(/^"|"$/g, ''));
+            const [userMessage, evalRule] = parts.map((p) =>
+                p.replace(/^"|"$/g, ""),
+            );
 
             if (!userMessage) {
                 throw new Error(`Row ${i + 1}: userMessage cannot be empty`);
             }
 
             // Generate title from userMessage (first line, max 50 chars)
-            const firstLine = userMessage.split('\n')[0];
-            const title = firstLine.length > 50
-                ? firstLine.substring(0, 50) + "..."
-                : firstLine;
+            const firstLine = userMessage.split("\n")[0];
+            const title =
+                firstLine.length > 50
+                    ? firstLine.substring(0, 50) + "..."
+                    : firstLine;
 
             cases.push({
                 userMessage,
-                evalRule: evalRule || '',
+                evalRule: evalRule || "",
                 title,
             });
         }
@@ -4978,7 +5631,10 @@ function BatchAddCasesDialog({
             const cases = parseCSV(text);
             setParsedCases(cases);
         } catch (error) {
-            const message = error instanceof Error ? error.message : 'Failed to parse CSV file';
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : "Failed to parse CSV file";
             setParseError(message);
             toast.error(message);
         }
@@ -4988,10 +5644,10 @@ function BatchAddCasesDialog({
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault();
         const droppedFile = e.dataTransfer.files[0];
-        if (droppedFile && droppedFile.type === 'text/csv') {
+        if (droppedFile && droppedFile.type === "text/csv") {
             void handleFileChange(droppedFile);
         } else {
-            toast.error('Please drop a CSV file');
+            toast.error("Please drop a CSV file");
         }
     };
 
@@ -5005,12 +5661,12 @@ function BatchAddCasesDialog({
 
         setIsUploading(true);
         try {
-            const response = await fetch('/api/evaluations/cases/batch', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+            const response = await fetch("/api/evaluations/cases/batch", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     contextId,
-                    cases: parsedCases.map(c => ({
+                    cases: parsedCases.map((c) => ({
                         userMessage: c.userMessage,
                         evalRule: c.evalRule,
                     })),
@@ -5019,7 +5675,7 @@ function BatchAddCasesDialog({
 
             if (!response.ok) {
                 const error = (await response.json()) as { error?: string };
-                throw new Error(error.error || 'Failed to create cases');
+                throw new Error(error.error || "Failed to create cases");
             }
 
             const result = (await response.json()) as {
@@ -5029,8 +5685,10 @@ function BatchAddCasesDialog({
             };
 
             if (result.failed > 0 && result.errors) {
-                toast.error(`Created ${result.created} cases, but ${result.failed} failed`);
-                console.error('Failed cases:', result.errors);
+                toast.error(
+                    `Created ${result.created} cases, but ${result.failed} failed`,
+                );
+                console.error("Failed cases:", result.errors);
             } else {
                 toast.success(`Successfully created ${result.created} cases`);
             }
@@ -5038,7 +5696,10 @@ function BatchAddCasesDialog({
             await onSuccess();
             onOpenChange(false);
         } catch (error) {
-            const message = error instanceof Error ? error.message : 'Failed to create cases';
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : "Failed to create cases";
             toast.error(message);
         } finally {
             setIsUploading(false);
@@ -5076,7 +5737,7 @@ function BatchAddCasesDialog({
                                 ? "border-red-300 bg-red-50"
                                 : parsedCases.length > 0
                                   ? "border-green-300 bg-green-50"
-                                  : "border-slate-300 bg-slate-50 hover:border-slate-400"
+                                  : "border-slate-300 bg-slate-50 hover:border-slate-400",
                         )}
                         onDrop={handleDrop}
                         onDragOver={handleDragOver}
@@ -5086,7 +5747,11 @@ function BatchAddCasesDialog({
                             type="file"
                             accept=".csv"
                             className="hidden"
-                            onChange={(e) => void handleFileChange(e.target.files?.[0] || null)}
+                            onChange={(e) =>
+                                void handleFileChange(
+                                    e.target.files?.[0] || null,
+                                )
+                            }
                         />
 
                         <Upload className="mx-auto size-12 text-slate-400 mb-4" />
@@ -5097,10 +5762,13 @@ function BatchAddCasesDialog({
                                     {file.name}
                                 </p>
                                 {parseError ? (
-                                    <p className="text-sm text-red-600">{parseError}</p>
+                                    <p className="text-sm text-red-600">
+                                        {parseError}
+                                    </p>
                                 ) : parsedCases.length > 0 ? (
                                     <p className="text-sm text-green-600">
-                                        ✓ Parsed {parsedCases.length} cases successfully
+                                        ✓ Parsed {parsedCases.length} cases
+                                        successfully
                                     </p>
                                 ) : null}
                             </div>
@@ -5111,13 +5779,16 @@ function BatchAddCasesDialog({
                                     <button
                                         type="button"
                                         className="text-primary underline underline-offset-2"
-                                        onClick={() => fileInputRef.current?.click()}
+                                        onClick={() =>
+                                            fileInputRef.current?.click()
+                                        }
                                     >
                                         browse
                                     </button>
                                 </p>
                                 <p className="text-xs text-slate-500">
-                                    CSV should have columns: userMessage, Evaluation Rule
+                                    CSV should have columns: userMessage,
+                                    Evaluation Rule
                                 </p>
                             </div>
                         )}
@@ -5133,22 +5804,41 @@ function BatchAddCasesDialog({
                                 <table className="w-full text-sm">
                                     <thead className="bg-slate-100 sticky top-0">
                                         <tr>
-                                            <th className="px-3 py-2 text-left font-medium text-slate-700 w-16">#</th>
-                                            <th className="px-3 py-2 text-left font-medium text-slate-700">Title (Auto-generated)</th>
-                                            <th className="px-3 py-2 text-left font-medium text-slate-700">User Message</th>
-                                            <th className="px-3 py-2 text-left font-medium text-slate-700">Eval Rule</th>
+                                            <th className="px-3 py-2 text-left font-medium text-slate-700 w-16">
+                                                #
+                                            </th>
+                                            <th className="px-3 py-2 text-left font-medium text-slate-700">
+                                                Title (Auto-generated)
+                                            </th>
+                                            <th className="px-3 py-2 text-left font-medium text-slate-700">
+                                                User Message
+                                            </th>
+                                            <th className="px-3 py-2 text-left font-medium text-slate-700">
+                                                Eval Rule
+                                            </th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {parsedCases.map((caseData, index) => (
-                                            <tr key={index} className="border-t hover:bg-slate-50">
-                                                <td className="px-3 py-2 text-slate-500">{index + 1}</td>
-                                                <td className="px-3 py-2 text-slate-900 font-medium">{caseData.title}</td>
+                                            <tr
+                                                key={index}
+                                                className="border-t hover:bg-slate-50"
+                                            >
+                                                <td className="px-3 py-2 text-slate-500">
+                                                    {index + 1}
+                                                </td>
+                                                <td className="px-3 py-2 text-slate-900 font-medium">
+                                                    {caseData.title}
+                                                </td>
                                                 <td className="px-3 py-2 text-slate-700 max-w-md truncate">
                                                     {caseData.userMessage}
                                                 </td>
                                                 <td className="px-3 py-2 text-slate-600 max-w-xs truncate">
-                                                    {caseData.evalRule || <span className="text-slate-400 italic">None</span>}
+                                                    {caseData.evalRule || (
+                                                        <span className="text-slate-400 italic">
+                                                            None
+                                                        </span>
+                                                    )}
                                                 </td>
                                             </tr>
                                         ))}
@@ -5168,10 +5858,14 @@ function BatchAddCasesDialog({
                         Cancel
                     </Button>
                     <Button
-                        disabled={parsedCases.length === 0 || isUploading || isBusy}
+                        disabled={
+                            parsedCases.length === 0 || isUploading || isBusy
+                        }
                         onClick={() => void handleSubmit()}
                     >
-                        {isUploading ? 'Creating...' : `Create ${parsedCases.length} Cases`}
+                        {isUploading
+                            ? "Creating..."
+                            : `Create ${parsedCases.length} Cases`}
                     </Button>
                 </DialogFooter>
             </DialogContent>

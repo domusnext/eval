@@ -10,11 +10,16 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const contextId = params?.contextId;
 
     if (typeof contextId !== "string" || !contextId.length) {
-        return NextResponse.json({ error: "Missing contextId" }, { status: 400 });
+        return NextResponse.json(
+            { error: "Missing contextId" },
+            { status: 400 },
+        );
     }
 
     try {
-        if (!request.headers.get("content-type")?.includes("application/json")) {
+        if (
+            !request.headers.get("content-type")?.includes("application/json")
+        ) {
             return NextResponse.json(
                 { error: "Expected JSON body" },
                 { status: 400 },
@@ -24,15 +29,13 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         const body = (await request.json().catch(() => ({}))) as {
             name?: string;
             description?: string | null;
-            environment?: Record<string, unknown>;
-            headers?: Record<string, string>;
+            contextSummary?: string | null;
         };
 
         await updateEvaluationContext(contextId, {
             name: body?.name,
             description: body?.description ?? undefined,
-            environment: body?.environment,
-            headers: body?.headers,
+            contextSummary: body?.contextSummary ?? undefined,
         });
 
         return NextResponse.json({ success: true });
@@ -47,7 +50,10 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
     const contextId = params?.contextId;
 
     if (typeof contextId !== "string" || !contextId.length) {
-        return NextResponse.json({ error: "Missing contextId" }, { status: 400 });
+        return NextResponse.json(
+            { error: "Missing contextId" },
+            { status: 400 },
+        );
     }
 
     try {

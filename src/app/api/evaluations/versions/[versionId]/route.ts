@@ -11,7 +11,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const versionId = params?.versionId;
 
     if (typeof versionId !== "string" || !versionId.length) {
-        return NextResponse.json({ error: "Missing versionId" }, { status: 400 });
+        return NextResponse.json(
+            { error: "Missing versionId" },
+            { status: 400 },
+        );
     }
 
     try {
@@ -45,7 +48,10 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
     const versionId = params?.versionId;
 
     if (typeof versionId !== "string" || !versionId.length) {
-        return NextResponse.json({ error: "Missing versionId" }, { status: 400 });
+        return NextResponse.json(
+            { error: "Missing versionId" },
+            { status: 400 },
+        );
     }
 
     try {

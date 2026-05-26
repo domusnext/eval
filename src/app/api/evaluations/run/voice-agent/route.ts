@@ -20,7 +20,6 @@ export async function POST(request: NextRequest) {
                 { status: 400 },
             );
         }
-        console.log("Proxying request to:", targetUrl, "with headers:", JSON.stringify(headers, null, 2), "and body:", JSON.stringify(body, null, 2));
         const upstream = await fetch(targetUrl, {
             method: "POST",
             headers: {
@@ -34,8 +33,6 @@ export async function POST(request: NextRequest) {
             },
             body: JSON.stringify(body),
         });
-
-        console.log("Received response from upstream with status:", upstream.status, "and headers:", JSON.stringify(Object.fromEntries(upstream.headers.entries()), null, 2));
 
         const contentType = upstream.headers.get("content-type") ?? "";
         if (!upstream.ok) {
